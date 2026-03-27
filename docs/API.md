@@ -122,6 +122,17 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 | GET | /backend/settings | RequireAdmin | 系统设置 JSON |
 | PUT | /backend/settings | RequireAdmin | 更新（merge） |
 
+### 3.7 公开接口（对外站点）
+
+供 luban-website 等对外站点按站点 slug + 路径获取**已发布**页面，**无需鉴权**。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET | /backend/public/sites/:slug/pages?path=:path | 无 | 按站点 slug 与 path 返回 `status=published` 的页面（含 schema）；path 缺省为 `/`。 |
+
+- 响应 200：与「GET /backend/sites/:id/pages/:pageId」同结构的 Page（含 schema）。
+- 404：站点不存在或该路径下无已发布页面。
+
 ---
 
 ## 4. 鉴权与权限
