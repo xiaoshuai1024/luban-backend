@@ -14,6 +14,9 @@ public interface SiteMapper {
     @Select("SELECT id, name, slug, base_url, status, created_at, updated_at FROM sites WHERE id = #{id}")
     Site getById(String id);
 
+    @Select("SELECT id, name, slug, base_url, status, created_at, updated_at FROM sites WHERE slug = #{slug}")
+    Site getBySlug(String slug);
+
     @Insert("INSERT INTO sites (id, name, slug, base_url, status, created_at, updated_at) " +
            "VALUES (#{id}, #{name}, #{slug}, #{baseUrl}, #{status}, #{createdAt}, #{updatedAt})")
     int insert(Site site);

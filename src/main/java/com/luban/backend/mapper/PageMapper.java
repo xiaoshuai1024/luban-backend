@@ -14,6 +14,9 @@ public interface PageMapper {
     @Select("SELECT id, site_id, name, path, status, schema_json, created_at, updated_at FROM pages WHERE id = #{pageId} AND site_id = #{siteId}")
     Page getByIdAndSiteId(@Param("pageId") String pageId, @Param("siteId") String siteId);
 
+    @Select("SELECT id, site_id, name, path, status, schema_json, created_at, updated_at FROM pages WHERE site_id = #{siteId} AND path = #{path} AND status = 'published'")
+    Page getBySiteIdAndPathPublished(@Param("siteId") String siteId, @Param("path") String path);
+
     @Insert("INSERT INTO pages (id, site_id, name, path, status, schema_json, created_at, updated_at) " +
             "VALUES (#{id}, #{siteId}, #{name}, #{path}, #{status}, #{schemaJson}, #{createdAt}, #{updatedAt})")
     int insert(Page page);

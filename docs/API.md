@@ -122,6 +122,17 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 | GET | /backend/settings | RequireAdmin | 系统设置 JSON |
 | PUT | /backend/settings | RequireAdmin | 更新（merge） |
 
+### 3.7 公开接口（对外站点）
+
+供 luban-website 等对外站点按站点 slug + 路径获取**已发布**页面，**无需鉴权**。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET | /backend/public/sites/:slug/pages?path=:path | 无 | 按站点 slug 与 path 返回 `status=published` 的页面（含 schema）；path 缺省为 `/`。 |
+
+- 响应 200：与「GET /backend/sites/:id/pages/:pageId」同结构的 Page（含 schema）。
+- 404：站点不存在或该路径下无已发布页面。
+
 ---
 
 ## 4. 鉴权与权限
@@ -169,3 +180,75 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 - 用户列表：`{ "list": [...], "total": number }`。
 
 本文档随 luban-backend 主后端迭代更新；新增或变更接口时请先更新本文档再实现。
+
+---
+
+## 7. Low-Code 运行时扩展接口（V1）
+
+本节用于支撑 low-code 运行时的数据源执行、草稿发布与版本回滚能力，BFF 对外路径见 `luban-bff/docs/LUBAN_BFF_API.md`。
+
+### 7.1 数据源执行（供 BFF 聚合调用）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| POST | /backend/lowcode/datasource/execute | RequireUser | 执行指定 schema 版本中的 datasource |
+
+请求体（建议）：
+
+```json
+{
+  "schemaId": "schema_home",
+  "version": "1.2.0",
+  "env": "dev",
+  "dataSourceId": "getRooms",
+  "payload": { "gender": "male" },
+  "traceId": "trace-123"
+}
+```
+
+响应 200（建议）：
+
+```json
+{
+  "traceId": "trace-123",
+  "data": {}
+}
+```
+
+### 7.2 schema 版本管理
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| POST | /backend/lowcode/schema/draft | RequireUser | 保存草稿 |
+| POST | /backend/lowcode/schema/publish | RequireUser | 发布草稿为新版本 |
+| POST | /backend/lowcode/schema/rollback | RequireUser | 回滚到历史版本（复制为新发布版本） |
+| GET  | /backend/lowcode/schema/:schemaId/versions | RequireUser | 查询版本历史 |
+
+版本状态约定：
+
+- `draft`
+- `published`
+- `archived`
+
+建议返回字段：
+
+```json
+{
+  "schemaId": "schema_home",
+  "version": "1.2.0",
+  "status": "published",
+  "operator": "user-1",
+  "createdAt": "2026-03-27T00:00:00Z",
+  "updatedAt": "2026-03-27T00:00:00Z"
+}
+```
+
+### 7.3 错误码补充（low-code 相关）
+
+| HTTP | code | 场景 |
+|------|------|------|
+| 400 | DATASOURCE_INVALID_ARGUMENT | 数据源参数不合法 |
+| 404 | DATASOURCE_NOT_FOUND | 数据源不存在 |
+| 404 | SCHEMA_VERSION_NOT_FOUND | 指定 schema 版本不存在 |
+| 409 | SCHEMA_PUBLISH_CONFLICT | 发布冲突（版本并发） |
+| 500 | DATASOURCE_EXECUTE_FAILED | 数据源执行失败 |
