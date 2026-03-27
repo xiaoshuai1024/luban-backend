@@ -23,6 +23,7 @@
 - [x] PublicController + PublicPageService 已落地
 - [x] AuthFilter 放行 `/backend/public/*` 无鉴权访问
 - [x] Mapper 支持按 `siteId + path + published` 查询
+- [x] 低代码数据源执行与版本管理契约已补充至 `docs/API.md`（`/backend/lowcode/*`）
 
 ## 并行开发规则
 
@@ -34,3 +35,14 @@
 ## 联调清单入口
 
 - 管理后台侧联调文档：`luban/docs/NEXT_VERSION_INTEGRATION_CHECKLIST.md`
+
+## Git 提交流程约束（避免 `unknown option trailer`）
+
+- 问题现象：使用环境默认 `git` 提交时，可能报错 `unknown option 'trailer'`。
+- 根因说明：本机默认 `git` 二进制与当前提交链路存在兼容问题。
+- 固定做法：提交和推送统一使用系统 Git：`/usr/bin/git`。
+- 命令模板：
+  - 查看状态：`/usr/bin/git status --short`
+  - 提交：`/usr/bin/git commit -m "<message>"`
+  - 推送：`/usr/bin/git push -u origin <branch>`
+- 分支策略：禁止直接推送 `master`，必须在功能分支提交并走 PR 合并。
