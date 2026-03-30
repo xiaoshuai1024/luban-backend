@@ -13,4 +13,10 @@ public class PingController {
     public ResponseEntity<Map<String, String>> ping() {
         return ResponseEntity.ok(Map.of("message", "pong"));
     }
+
+    /** Health check; with servlet context /backend → GET …/backend/healthz */
+    @GetMapping("/healthz")
+    public ResponseEntity<Map<String, String>> healthz() {
+        return ResponseEntity.ok(Map.of("status", "ok"));
+    }
 }
