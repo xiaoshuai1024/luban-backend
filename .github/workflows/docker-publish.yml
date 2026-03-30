@@ -1,0 +1,51 @@
+name: Docker publish
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/luban-backend:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/luban-backend:master
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.LUBAN_DEPLOY_APP_ID }}
+          private-key: ${{ secrets.LUBAN_DEPLOY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            luban
+
+      - name: Dispatch deploy
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository_owner }}/luban/dispatches" \
+            -d "{\"event_type\":\"release\",\"client_payload\":{\"env\":\"prod\",\"service\":\"backend\",\"tag\":\"sha-${{ github.sha }}\",\"sha\":\"${{ github.sha }}\"}}"
