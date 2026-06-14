@@ -1,9 +1,7 @@
--- DEPRECATED: kept only as historical reference. Schema management is now handled
--- by Flyway migrations under src/main/resources/db/migration/. Do not edit this
--- file for schema changes — add a new V<timestamp>__*.sql migration instead.
---
--- Idempotent schema (aligned with luban-backend-go dao/mysql.go)
-CREATE TABLE IF NOT EXISTS sites (
+-- Flyway baseline migration: 4 tables (aligned with luban-backend-go dao/mysql.go)
+-- This file must NOT use IF NOT EXISTS: Flyway executes against an empty baseline-on-migrate schema.
+
+CREATE TABLE sites (
     id         VARCHAR(36)  PRIMARY KEY,
     name       VARCHAR(255) NOT NULL,
     slug       VARCHAR(128) NOT NULL,
@@ -14,7 +12,7 @@ CREATE TABLE IF NOT EXISTS sites (
     UNIQUE KEY uk_sites_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS pages (
+CREATE TABLE pages (
     id          VARCHAR(36)  PRIMARY KEY,
     site_id     VARCHAR(36)  NOT NULL,
     name        VARCHAR(255) NOT NULL,
@@ -27,7 +25,7 @@ CREATE TABLE IF NOT EXISTS pages (
     CONSTRAINT fk_pages_site FOREIGN KEY (site_id) REFERENCES sites(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id         VARCHAR(36)  PRIMARY KEY,
     username   VARCHAR(128) NOT NULL,
     name       VARCHAR(255),
@@ -39,7 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uk_users_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS system_settings (
+CREATE TABLE system_settings (
     id         TINYINT       PRIMARY KEY,
     data_json  JSON         NOT NULL,
     updated_at DATETIME(3)  NOT NULL
