@@ -27,6 +27,8 @@ public class AuthFilter implements Filter {
     private static final Pattern ADMIN_SITES = Pattern.compile("^/backend/sites(/[^/]+)?$"); // /backend/sites or /backend/sites/:id
     private static final Pattern ADMIN_USERS = Pattern.compile("^/backend/users(/.*)?$");
     private static final Pattern ADMIN_SETTINGS = Pattern.compile("^/backend/settings$");
+    /** T-be-8 收窄：仅公开提交端点免鉴权（POST /backend/lead/forms/:id/submit）。 */
+    private static final Pattern PUBLIC_LEAD_SUBMIT = Pattern.compile("^/backend/lead/forms/[^/]+/submit$");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -45,7 +47,9 @@ public class AuthFilter implements Filter {
             if (role != null) role = role.trim();
             UserContext.set(userId != null ? userId : "", role != null ? role : "");
 
-            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/") || path.startsWith("/backend/lead/forms")) {
+            // 公开端点：ping / login / public/* / lead submit（收窄为仅 submit POST）
+            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/")
+                    || (PUBLIC_LEAD_SUBMIT.matcher(path).matches() && "POST".equals(method))) {
                 chain.doFilter(request, response);
                 return;
             }

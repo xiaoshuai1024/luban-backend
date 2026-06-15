@@ -39,6 +39,34 @@ public class LeadCryptoService {
         this.keySpec = new SecretKeySpec(deriveKey(keyB64), "AES");
     }
 
+    /**
+     * T-be-8 安全加固：密钥强制 env（无默认值）。
+     * 生产环境（profile=prod）若未配置 LEAD_ENC_KEY，启动直接失败。
+     * 开发环境保留兜底 key + WARN 日志。
+     */
+    private static byte[] deriveKey(String keyB64) {
+        if (keyB64 == null || keyB64.isBlank()) {
+            String profile = System.getenv().getOrDefault("SPRING_PROFILES_ACTIVE", "");
+            if ("prod".equalsIgnoreCase(profile)) {
+                // 生产环境强制要求 LEAD_ENC_KEY，无默认值（plan §6.1b 脱敏红线）
+                throw new IllegalStateException(
+                    "生产环境必须配置 LEAD_ENC_KEY（lead.enc.key）；禁止使用开发兜底 key");
+            }
+            log.warn("LEAD_ENC_KEY 未配置，使用开发兜底 key；生产环境必须配置 lead.enc.key");
+            return DEV_FALLBACK_KEY;
+        }
+        byte[] k = Base64.getDecoder().decode(keyB64);
+        if (k.length != 32 && k.length != 16) {
+            throw new IllegalArgumentException("LEAD_ENC_KEY 须为 16 或 32 字节 base64，实际 " + k.length);
+        }
+        if (k.length == 16) {
+            byte[] k32 = new byte[32];
+            System.arraycopy(k, 0, k32, 0, 16);
+            return k32;
+        }
+        return k;
+    }
+
     /** 加密明文，返回 base64(IV||ciphertext+tag)。 */
     public String encrypt(String plain) {
         if (plain == null) return null;
@@ -92,22 +120,5 @@ public class LeadCryptoService {
         String name = parts[0];
         String masked = name.length() <= 1 ? "***" : name.substring(0, 1) + "***";
         return masked + "@" + parts[1];
-    }
-
-    private static byte[] deriveKey(String keyB64) {
-        if (keyB64 == null || keyB64.isBlank()) {
-            log.warn("LEAD_ENC_KEY 未配置，使用开发兜底 key；生产环境必须配置 lead.enc.key");
-            return DEV_FALLBACK_KEY;
-        }
-        byte[] k = Base64.getDecoder().decode(keyB64);
-        if (k.length != 32 && k.length != 16) {
-            throw new IllegalArgumentException("LEAD_ENC_KEY 须为 16 或 32 字节 base64，实际 " + k.length);
-        }
-        if (k.length == 16) {
-            byte[] k32 = new byte[32];
-            System.arraycopy(k, 0, k32, 0, 16);
-            return k32;
-        }
-        return k;
     }
 }
