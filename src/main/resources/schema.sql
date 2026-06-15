@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS leads (
     form_id       VARCHAR(36)  NOT NULL,
     page_id       VARCHAR(36)  NOT NULL,
     channel_id    VARCHAR(36),
-    contact_json  JSON         NOT NULL,
+    contact_json  TEXT         NOT NULL,
     utm_json      JSON,
     status        VARCHAR(16)  NOT NULL DEFAULT 'new',
     assignee_id   VARCHAR(36),

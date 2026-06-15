@@ -1,6 +1,7 @@
 package com.luban.backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.backend.dto.LeadResponse;
 import com.luban.backend.dto.LeadSubmitRequest;
 import com.luban.backend.dto.LeadSubmitResult;
 import com.luban.backend.entity.Form;
@@ -11,13 +12,13 @@ import com.luban.backend.mapper.LeadMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Lead 线索领域服务：留资提交编排（防刷→去重→加密→入库→通知）。
- *
+ * Lead 线索领域服务：留资提交编排（防刷→去重→加密→入库→通知）+ 线索中心读写 + 导出。
  * 编排逻辑通过 mock mapper/service 单测覆盖；DB 真实交互由集成测试覆盖。
  */
 @Service
@@ -101,6 +102,92 @@ public class LeadService {
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), exists > 0);
     }
 
+    /** 线索中心：列表（分页 + 筛选，contact 脱敏）。 */
+    public Map<String, Object> list(String siteId, String status, String formId, String assigneeId, int page, int size) {
+        int offset = Math.max(0, (page - 1) * size);
+        List<Lead> leads = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
+        int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
+        List<LeadResponse> respList = leads.stream().map(this::toResponse).toList();
+        return Map.of("list", respList, "total", total, "page", page, "pageSize", size);
+    }
+
+    public LeadResponse get(String siteId, String leadId) {
+        return toResponse(getOrThrow(siteId, leadId));
+    }
+
+    public LeadResponse transitStatus(String siteId, String leadId, String toStatusRaw, String actorId) {
+        Lead lead = getOrThrow(siteId, leadId);
+        LeadStatusMachine.Status from = statusMachine.parse(lead.getStatus());
+        LeadStatusMachine.Status to = statusMachine.parse(toStatusRaw);
+        statusMachine.ensureValid(from, to);
+        Instant now = Instant.now();
+        Instant convertedAt = to == LeadStatusMachine.Status.CONVERTED ? now : lead.getConvertedAt();
+        String assignee = (to == LeadStatusMachine.Status.ASSIGNED && actorId != null) ? actorId : lead.getAssigneeId();
+        leadMapper.updateStatus(leadId, siteId, to.name().toLowerCase(), assignee, convertedAt, now);
+        lead.setStatus(to.name().toLowerCase());
+        lead.setAssigneeId(assignee);
+        lead.setConvertedAt(convertedAt);
+        return toResponse(lead);
+    }
+
+    /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。 */
+    public String exportCsv(String siteId) {
+        List<Lead> leads = leadMapper.listAllForExport(siteId);
+        StringBuilder sb = new StringBuilder();
+        sb.append("id,phone,email,name,status,assignee,created_at\n");
+        for (Lead l : leads) {
+            Map<String, String> contact = decryptContact(l);
+            sb.append(csv(l.getId())).append(',')
+                    .append(csv(contact.get("phone"))).append(',')
+                    .append(csv(contact.get("email"))).append(',')
+                    .append(csv(contact.get("name"))).append(',')
+                    .append(csv(l.getStatus())).append(',')
+                    .append(csv(l.getAssigneeId())).append(',')
+                    .append(csv(l.getCreatedAt() != null ? l.getCreatedAt().toString() : "")).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private Lead getOrThrow(String siteId, String leadId) {
+        Lead lead = leadMapper.getByIdAndSiteId(leadId, siteId);
+        if (lead == null) throw BusinessException.leadNotFound();
+        return lead;
+    }
+
+    /** 转响应：contact 解密后脱敏（phone/email）。 */
+    public LeadResponse toResponse(Lead lead) {
+        Map<String, String> masked = new LinkedHashMap<>();
+        Map<String, String> contact = decryptContact(lead);
+        for (Map.Entry<String, String> e : contact.entrySet()) {
+            String k = e.getKey();
+            String v = e.getValue();
+            if ("phone".equalsIgnoreCase(k)) masked.put(k, cryptoService.maskPhone(v));
+            else if ("email".equalsIgnoreCase(k)) masked.put(k, cryptoService.maskEmail(v));
+            else masked.put(k, v);
+        }
+        Map<String, String> utm = null;
+        if (lead.getUtmJson() != null && !lead.getUtmJson().isBlank()) {
+            try {
+                utm = objectMapper.readValue(lead.getUtmJson(), Map.class);
+            } catch (Exception ignored) {
+            }
+        }
+        return new LeadResponse(lead.getId(), lead.getSiteId(), lead.getFormId(), lead.getPageId(),
+                lead.getChannelId(), masked, utm, lead.getStatus(), lead.getAssigneeId(), lead.getSourceIp(),
+                lead.getCreatedAt(), lead.getUpdatedAt(), lead.getConvertedAt());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> decryptContact(Lead lead) {
+        if (lead.getContactJson() == null || lead.getContactJson().isBlank()) return Map.of();
+        try {
+            String plain = cryptoService.decrypt(lead.getContactJson());
+            return objectMapper.readValue(plain, Map.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     private List<String> parseDedupKeys(Form form) {
         if (form.getDedupKeysJson() == null || form.getDedupKeysJson().isBlank()) {
             return DEFAULT_DEDUP_KEYS;
@@ -133,32 +220,11 @@ public class LeadService {
         }
     }
 
-    // 供 controller 的状态流转方法（P0 最小）
-    public Lead get(String siteId, String leadId) {
-        Lead lead = leadMapper.getByIdAndSiteId(leadId, siteId);
-        if (lead == null) throw BusinessException.leadNotFound();
-        return lead;
-    }
-
-    public Lead transitStatus(String siteId, String leadId, String toStatusRaw, String actorId) {
-        Lead lead = get(siteId, leadId);
-        LeadStatusMachine.Status from = statusMachine.parse(lead.getStatus());
-        LeadStatusMachine.Status to = statusMachine.parse(toStatusRaw);
-        statusMachine.ensureValid(from, to);
-        Instant now = Instant.now();
-        Instant convertedAt = to == LeadStatusMachine.Status.CONVERTED ? now : lead.getConvertedAt();
-        String assignee = (to == LeadStatusMachine.Status.ASSIGNED && actorId != null) ? actorId : lead.getAssigneeId();
-        leadMapper.updateStatus(leadId, siteId, to.name().toLowerCase(), assignee, convertedAt, now);
-        lead.setStatus(to.name().toLowerCase());
-        lead.setAssigneeId(assignee);
-        lead.setConvertedAt(convertedAt);
-        return lead;
-    }
-
-    public Map<String, Object> list(String siteId, String status, String formId, String assigneeId, int page, int size) {
-        int offset = Math.max(0, (page - 1) * size);
-        List<Lead> list = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
-        int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
-        return Map.of("list", list, "total", total, "page", page, "pageSize", size);
+    private static String csv(String v) {
+        if (v == null) return "";
+        if (v.contains(",") || v.contains("\"") || v.contains("\n")) {
+            return "\"" + v.replace("\"", "\"\"") + "\"";
+        }
+        return v;
     }
 }
