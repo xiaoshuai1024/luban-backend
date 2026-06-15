@@ -65,8 +65,13 @@ public class LeadController {
     }
 
     @GetMapping("/export")
-    public ResponseEntity<byte[]> export(@RequestParam String siteId) {
-        String csv = leadService.exportCsv(siteId);
+    public ResponseEntity<byte[]> export(
+            @RequestParam String siteId,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "formId", required = false) String formId,
+            @RequestParam(value = "assigneeId", required = false) String assigneeId,
+            @RequestHeader(value = "X-User-ID", required = false) String actorId) {
+        String csv = leadService.exportCsv(siteId, status, formId, assigneeId, actorId);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv; charset=UTF-8"));
         headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=leads.csv");

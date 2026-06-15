@@ -64,8 +64,24 @@ public class LeadService {
      *
      * @throws BusinessException FORM_NOT_FOUND / LEAD_SPAM_BLOCKED / LEAD_DUPLICATE
      */
-    @Transactional(rollbackFor = Exception.class)
     public LeadSubmitResult submit(LeadSubmitRequest req) {
+        // 通知移到事务外（修复 🔴 notify-in-txn）：先持久化，提交后再通知
+        LeadSubmitResult result = doSubmit(req);
+        // 事务已提交，通知失败不影响 lead（非阻塞）
+        try {
+            Form form = formMapper.getById(req.formId());
+            if (form != null) {
+                Lead saved = leadMapper.getByIdAndSiteId(result.leadId(), form.getSiteId());
+                if (saved != null) notifyService.notifyNewLead(saved, form);
+            }
+        } catch (Exception e) {
+            // 通知失败不阻塞主流程（lead 已持久化）
+        }
+        return result;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected LeadSubmitResult doSubmit(LeadSubmitRequest req) {
         Form form = formMapper.getById(req.formId());
         if (form == null) {
             throw BusinessException.formNotFound();
@@ -101,24 +117,25 @@ public class LeadService {
         boolean dedupHit = exists > 0;
         if (dedupHit) {
             if (policy == DedupService.Policy.OVERWRITE) {
-                // 删除旧记录（窗内同 form+hash），随后插新
-                leadMapper.deleteByFormHash(req.formId(), hash);
+                // 仅删除窗内旧记录（修复 🔴 delete 跨窗口误删），随后插新
+                leadMapper.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
             } else if (policy == DedupService.Policy.MERGE) {
-                // 合并：旧 contact_json 保留旧字段 + 覆盖新提交字段，更新旧记录
+                // 合并：旧 contact + 新 contact 字段覆盖；utm 也合并（修复 🔴 MERGE 丢弃旧 utm）
                 Lead existing = leadMapper.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
                 if (existing != null) {
-                    Map<String, String> merged = new LinkedHashMap<>(decryptContact(existing));
-                    merged.putAll(req.contact());
+                    Map<String, String> mergedContact = new LinkedHashMap<>(decryptContact(existing));
+                    mergedContact.putAll(req.contact());
+                    String mergedUtm = mergeUtm(existing.getUtmJson(), req.utm());
                     leadMapper.updateContact(existing.getId(), existing.getSiteId(),
-                            cryptoService.encrypt(toJson(merged)), toJson(req.utm()), Instant.now());
+                            cryptoService.encrypt(toJson(mergedContact)), mergedUtm, Instant.now());
                     Lead refreshed = leadMapper.getByIdAndSiteId(existing.getId(), existing.getSiteId());
-                    notifyService.notifyNewLead(refreshed != null ? refreshed : existing, form);
-                    return new LeadSubmitResult(existing.getId(), existing.getStatus(), true);
+                    String status = refreshed != null ? refreshed.getStatus() : existing.getStatus();
+                    return new LeadSubmitResult(existing.getId(), status, true);
                 }
             }
         }
 
-        // 3. 加密 contact + 构建 lead
+        // 3. 加密 contact + 构建 lead（OVERWRITE 并发竞争：uk_form_dedup 唯一约束冲突时降级为 MARK）
         String encryptedContact = cryptoService.encrypt(toJson(req.contact()));
         Lead lead = new Lead();
         lead.setId(UUID.randomUUID().toString());
@@ -136,12 +153,28 @@ public class LeadService {
         Instant now = Instant.now();
         lead.setCreatedAt(now);
         lead.setUpdatedAt(now);
-        leadMapper.insert(lead);
-
-        // 4. 通知（失败不阻塞主流程）
-        notifyService.notifyNewLead(lead, form);
+        try {
+            leadMapper.insert(lead);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // OVERWRITE 并发：两条提交同时通过 count 检查 → 都删除 → 第二条 insert 撞唯一键
+            // 降级为重复标记（修复 🔴 并发 500）
+            lead.setStatus(LeadStatusMachine.Status.INVALID.name().toLowerCase());
+        }
 
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
+    }
+
+    /** 合并 utm：旧值 + 新值（新值覆盖同名 key）。 */
+    @SuppressWarnings("unchecked")
+    private String mergeUtm(String oldUtmJson, Map<String, String> newUtm) {
+        Map<String, String> merged = new LinkedHashMap<>();
+        if (oldUtmJson != null && !oldUtmJson.isBlank()) {
+            try {
+                merged.putAll(objectMapper.readValue(oldUtmJson, Map.class));
+            } catch (Exception ignored) { }
+        }
+        if (newUtm != null) merged.putAll(newUtm);
+        return toJson(merged);
     }
 
     /** 线索中心：列表（分页 + 筛选，contact 脱敏）。校验 siteId 存在以强化多租户隔离（T-be-2）。 */
@@ -162,11 +195,13 @@ public class LeadService {
     /**
      * keyword 搜索（T-be-3）：contact 加密无法 SQL LIKE，需拉取后解密匹配。
      * 为控制内存，单次最多扫描 MAX_KEYWORD_SCAN 条，分页在匹配结果上做。
+     * 超出扫描上限时返回 truncated=true 提示前端（修复 🔴 total 不准）。
      */
     private Map<String, Object> listWithKeyword(String siteId, String status, String formId, String assigneeId,
                                                 String keyword, int page, int size) {
         int scanLimit = 500; // 单次最多扫描 500 条，避免全表解密
         List<Lead> all = leadMapper.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
+        boolean truncated = all.size() >= scanLimit;
         String kw = keyword.toLowerCase();
         List<LeadResponse> matched = all.stream()
                 .map(l -> {
@@ -182,7 +217,7 @@ public class LeadService {
         int offset = Math.max(0, (page - 1) * size);
         int end = Math.min(offset + size, total);
         List<LeadResponse> pageList = offset < total ? matched.subList(offset, end) : List.of();
-        return Map.of("list", pageList, "total", total, "page", page, "pageSize", size);
+        return Map.of("list", pageList, "total", total, "page", page, "pageSize", size, "truncated", truncated);
     }
 
     public LeadResponse get(String siteId, String leadId) {
@@ -223,10 +258,24 @@ public class LeadService {
         return toResponse(lead);
     }
 
-    /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。 */
-    public String exportCsv(String siteId) {
+    /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。
+     *  支持筛选参数（修复 🔴 export 忽略 filter）。 */
+    public String exportCsv(String siteId, String status, String formId, String assigneeId, String actorId) {
         ensureSiteExists(siteId);
-        List<Lead> leads = leadMapper.listAllForExport(siteId);
+        // 审计：记录导出操作（含筛选条件）
+        leadAuditMapper.insert(newAuditLog(siteId, null, actorId, "EXPORT",
+                toJson(Map.of("status", status == null ? "" : status,
+                        "formId", formId == null ? "" : formId,
+                        "assigneeId", assigneeId == null ? "" : assigneeId))));
+        List<Lead> leads;
+        boolean hasFilter = (status != null && !status.isBlank())
+                || (formId != null && !formId.isBlank())
+                || (assigneeId != null && !assigneeId.isBlank());
+        if (hasFilter) {
+            leads = leadMapper.listForExport(siteId, status, formId, assigneeId);
+        } else {
+            leads = leadMapper.listAllForExport(siteId);
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("id,phone,email,name,status,assignee,created_at\n");
         for (Lead l : leads) {

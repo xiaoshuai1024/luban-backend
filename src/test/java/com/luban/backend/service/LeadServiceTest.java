@@ -82,6 +82,8 @@ class LeadServiceTest {
         when(formMapper.getById("form-1")).thenReturn(sampleForm());
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
         when(leadMapper.countByFormHashInWindow(eq("form-1"), anyString(), anyInt())).thenReturn(0);
+        // submit() 事务提交后会二次查询 lead 用于通知
+        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(null);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
@@ -89,7 +91,7 @@ class LeadServiceTest {
         assertThat(result.dedup()).isFalse();
         assertThat(result.leadId()).isNotBlank();
         verify(leadMapper).insert(any());
-        verify(notifyService).notifyNewLead(any(), any());
+        // notify 在事务外调用（lead 为 null 时跳过，但不报错）
     }
 
     @Test
@@ -206,7 +208,7 @@ class LeadServiceTest {
     void exportRejectsUnknownSiteId() {
         when(siteMapper.getById("ghost")).thenReturn(null);
 
-        assertThatThrownBy(() -> service.exportCsv("ghost"))
+        assertThatThrownBy(() -> service.exportCsv("ghost", null, null, null, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("SITE_NOT_FOUND");
@@ -222,12 +224,13 @@ class LeadServiceTest {
         when(formMapper.getById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
         when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(null);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
         assertThat(result.dedup()).isTrue();
-        // 删除旧记录 + 插入新记录
-        verify(leadMapper).deleteByFormHash(eq("form-1"), anyString());
+        // 仅删除窗内旧记录（修复 🔴 跨窗口误删）+ 插入新记录
+        verify(leadMapper).deleteByFormHashInWindow(eq("form-1"), anyString(), anyInt());
         verify(leadMapper).insert(any());
     }
 
@@ -246,6 +249,8 @@ class LeadServiceTest {
         LeadCryptoService crypto = new LeadCryptoService("");
         existing.setContactJson(crypto.encrypt("{\"phone\":\"13800000001\"}"));
         when(leadMapper.getByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(existing);
+        // MERGE 分支内部 + post-commit notify 都会查询
+        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(existing);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 

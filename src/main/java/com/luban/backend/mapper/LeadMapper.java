@@ -65,6 +65,19 @@ public interface LeadMapper {
     @Select("SELECT " + COLS + " FROM leads WHERE site_id = #{siteId} ORDER BY created_at DESC")
     List<Lead> listAllForExport(@Param("siteId") String siteId);
 
+    /** 导出（带筛选，修复 🔴 export 忽略 filter 参数）。 */
+    @Select("<script>"
+            + "SELECT " + COLS + " FROM leads WHERE site_id = #{siteId}"
+            + "<if test='status != null and status != \"\"'> AND status = #{status}</if>"
+            + "<if test='formId != null and formId != \"\"'> AND form_id = #{formId}</if>"
+            + "<if test='assigneeId != null and assigneeId != \"\"'> AND assignee_id = #{assigneeId}</if>"
+            + " ORDER BY created_at DESC"
+            + "</script>")
+    List<Lead> listForExport(@Param("siteId") String siteId,
+                             @Param("status") String status,
+                             @Param("formId") String formId,
+                             @Param("assigneeId") String assigneeId);
+
     /**
      * 查询窗口内同 form+dedup_hash 的线索（用于 OVERWRITE/MERGE 去重策略，T-be-4）。
      * 返回命中记录（最多 1 条，因 uk_form_dedup 唯一约束）。
@@ -75,9 +88,12 @@ public interface LeadMapper {
     Lead getByFormHashInWindow(@Param("formId") String formId, @Param("hash") String hash,
                                @Param("windowSeconds") int windowSeconds);
 
-    /** 按 form+hash 删除（OVERWRITE 策略：删旧插新，T-be-4）。 */
-    @Delete("DELETE FROM leads WHERE form_id = #{formId} AND dedup_hash = #{hash}")
-    int deleteByFormHash(@Param("formId") String formId, @Param("hash") String hash);
+    /** 按 form+hash 删除窗内记录（OVERWRITE 策略：删旧插新，T-be-4）。
+     *  仅删除窗口内的记录，保留历史线索（修复 🔴 delete 跨窗口误删）。 */
+    @Delete("DELETE FROM leads WHERE form_id = #{formId} AND dedup_hash = #{hash} "
+            + "AND created_at >= DATE_SUB(NOW(), INTERVAL #{windowSeconds} SECOND)")
+    int deleteByFormHashInWindow(@Param("formId") String formId, @Param("hash") String hash,
+                                 @Param("windowSeconds") int windowSeconds);
 
     /** 按 id 删除审计/线索（MERGE 策略更新旧记录后无须删除；备用）。 */
     @Update("UPDATE leads SET contact_json = #{contactJson}, utm_json = #{utmJson}, "
