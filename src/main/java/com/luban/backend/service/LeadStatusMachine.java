@@ -9,15 +9,24 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Lead 状态机（纯逻辑，便于单测）。合法转移见 plan §3.1：
+ * Lead 状态机（纯逻辑，便于单测）。合法转移见 plan §3.1（对齐 API.md §3.10）：
  *
  * <pre>
  * NEW ──▶ ASSIGNED ──▶ CONTACTING ──▶ CONVERTED
- *  │           │           │
- *  └─▶ INVALID ◀┘           └─▶ LOST
+ *  │        │  │          │
+ *  │        │  └▶ LOST     ├─▶ LOST
+ *  │        └──────────────┘
+ *  └─▶ INVALID         └─▶ INVALID
  * </pre>
  *
- * CONVERTED / INVALID / LOST 为终态。
+ * 合法转移穷举（对齐 API.md §3.10）：
+ * <ul>
+ *   <li>NEW → ASSIGNED / INVALID</li>
+ *   <li>ASSIGNED → CONTACTING / INVALID / LOST</li>
+ *   <li>CONTACTING → CONVERTED / LOST / INVALID</li>
+ * </ul>
+ *
+ * CONVERTED / INVALID / LOST 为终态。同状态请求视为幂等放行。
  */
 @Service
 public class LeadStatusMachine {
@@ -26,8 +35,8 @@ public class LeadStatusMachine {
 
     private static final Map<Status, Set<Status>> TRANSITIONS = Map.of(
             Status.NEW, EnumSet.of(Status.ASSIGNED, Status.INVALID),
-            Status.ASSIGNED, EnumSet.of(Status.CONTACTING, Status.INVALID),
-            Status.CONTACTING, EnumSet.of(Status.CONVERTED, Status.LOST),
+            Status.ASSIGNED, EnumSet.of(Status.CONTACTING, Status.INVALID, Status.LOST),
+            Status.CONTACTING, EnumSet.of(Status.CONVERTED, Status.LOST, Status.INVALID),
             Status.CONVERTED, EnumSet.noneOf(Status.class),
             Status.INVALID, EnumSet.noneOf(Status.class),
             Status.LOST, EnumSet.noneOf(Status.class)

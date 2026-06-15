@@ -9,6 +9,7 @@ import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -41,6 +42,7 @@ public class FormService {
         return FormResponse.fromEntity(f);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public FormResponse create(FormSaveRequest req) {
         if (siteMapper.getById(req.siteId()) == null) throw BusinessException.siteNotFound();
         Form f = new Form();
@@ -62,6 +64,7 @@ public class FormService {
         return FormResponse.fromEntity(f);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public FormResponse update(String siteId, String id, FormSaveRequest req) {
         Form existing = formMapper.getByIdAndSiteId(id, siteId);
         if (existing == null) throw BusinessException.formNotFound();

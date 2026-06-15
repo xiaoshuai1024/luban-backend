@@ -107,4 +107,16 @@ public class BusinessException extends RuntimeException {
     public static BusinessException leadValidationFailed(String message) {
         return new BusinessException(HttpStatus.BAD_REQUEST, "LEAD_VALIDATION_FAILED", message != null ? message : "留资信息校验失败");
     }
+
+    // ---- 页面版本（plan §3.4）----
+
+    public static BusinessException pageVersionNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "页面版本不存在");
+    }
+
+    // ---- FeatureGate（plan §3.5）----
+
+    public static BusinessException featureGateNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "FEATURE_GATE_NOT_FOUND", "特性开关不存在");
+    }
 }

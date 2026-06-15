@@ -85,3 +85,37 @@ CREATE TABLE IF NOT EXISTS leads (
     KEY idx_leads_assignee (assignee_id, status),
     KEY idx_leads_created (site_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 页面版本快照（发布即建版本，plan §3.4）
+CREATE TABLE IF NOT EXISTS page_versions (
+    id          VARCHAR(36) PRIMARY KEY,
+    site_id     VARCHAR(36) NOT NULL,
+    page_id     VARCHAR(36) NOT NULL,
+    version     INT NOT NULL,
+    schema_json JSON NOT NULL,
+    operator_id VARCHAR(36),
+    created_at  DATETIME(3) NOT NULL,
+    UNIQUE KEY uk_page_version (page_id, version),
+    KEY idx_pv_page (page_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 特性开关（site 维度，plan §3.5）
+CREATE TABLE IF NOT EXISTS feature_gates (
+    site_id  VARCHAR(36) NOT NULL,
+    gate_key VARCHAR(64) NOT NULL,
+    enabled  TINYINT(1) NOT NULL DEFAULT 1,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (site_id, gate_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 线索审计日志（解密查看 / 状态转移，plan §3.1 审计口径）
+CREATE TABLE IF NOT EXISTS lead_audit_logs (
+    id         VARCHAR(36) PRIMARY KEY,
+    site_id    VARCHAR(36) NOT NULL,
+    lead_id    VARCHAR(36) NOT NULL,
+    actor_id   VARCHAR(36) NOT NULL,
+    action     VARCHAR(32) NOT NULL,
+    detail     JSON,
+    created_at DATETIME(3) NOT NULL,
+    KEY idx_audit_lead (site_id, lead_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

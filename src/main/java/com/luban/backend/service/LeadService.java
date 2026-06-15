@@ -9,6 +9,7 @@ import com.luban.backend.entity.Lead;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.LeadMapper;
+import com.luban.backend.mapper.SiteMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ public class LeadService {
 
     private final FormMapper formMapper;
     private final LeadMapper leadMapper;
+    private final SiteMapper siteMapper;
     private final DedupService dedupService;
     private final AntiSpamService antiSpamService;
     private final LeadCryptoService cryptoService;
@@ -39,11 +41,13 @@ public class LeadService {
     private final LeadNotifyService notifyService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public LeadService(FormMapper formMapper, LeadMapper leadMapper, DedupService dedupService,
-                       AntiSpamService antiSpamService, LeadCryptoService cryptoService,
-                       LeadStatusMachine statusMachine, LeadNotifyService notifyService) {
+    public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
+                       DedupService dedupService, AntiSpamService antiSpamService,
+                       LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
+                       LeadNotifyService notifyService) {
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
+        this.siteMapper = siteMapper;
         this.dedupService = dedupService;
         this.antiSpamService = antiSpamService;
         this.cryptoService = cryptoService;
@@ -107,8 +111,9 @@ public class LeadService {
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), exists > 0);
     }
 
-    /** 线索中心：列表（分页 + 筛选，contact 脱敏）。 */
+    /** 线索中心：列表（分页 + 筛选，contact 脱敏）。校验 siteId 存在以强化多租户隔离（T-be-2）。 */
     public Map<String, Object> list(String siteId, String status, String formId, String assigneeId, int page, int size) {
+        ensureSiteExists(siteId);
         int offset = Math.max(0, (page - 1) * size);
         List<Lead> leads = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
         int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
@@ -117,6 +122,7 @@ public class LeadService {
     }
 
     public LeadResponse get(String siteId, String leadId) {
+        ensureSiteExists(siteId);
         return toResponse(getOrThrow(siteId, leadId));
     }
 
@@ -138,6 +144,7 @@ public class LeadService {
 
     /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。 */
     public String exportCsv(String siteId) {
+        ensureSiteExists(siteId);
         List<Lead> leads = leadMapper.listAllForExport(siteId);
         StringBuilder sb = new StringBuilder();
         sb.append("id,phone,email,name,status,assignee,created_at\n");
@@ -158,6 +165,13 @@ public class LeadService {
         Lead lead = leadMapper.getByIdAndSiteId(leadId, siteId);
         if (lead == null) throw BusinessException.leadNotFound();
         return lead;
+    }
+
+    /** 校验 siteId 存在，强化多租户隔离（T-be-2）。 */
+    private void ensureSiteExists(String siteId) {
+        if (siteId == null || siteId.isBlank() || siteMapper.getById(siteId) == null) {
+            throw BusinessException.siteNotFound();
+        }
     }
 
     /** 转响应：contact 解密后脱敏（phone/email）。 */

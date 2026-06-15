@@ -9,6 +9,7 @@ import com.luban.backend.mapper.PageMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -20,11 +21,13 @@ public class PageService {
 
     private final PageMapper pageMapper;
     private final SiteMapper siteMapper;
+    private final PageVersionService pageVersionService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PageService(PageMapper pageMapper, SiteMapper siteMapper) {
+    public PageService(PageMapper pageMapper, SiteMapper siteMapper, PageVersionService pageVersionService) {
         this.pageMapper = pageMapper;
         this.siteMapper = siteMapper;
+        this.pageVersionService = pageVersionService;
     }
 
     public List<PageResponse> list(String siteId) {
@@ -38,6 +41,7 @@ public class PageService {
         return PageResponse.fromEntity(p);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public PageResponse create(String siteId, String name, String path, String status, JsonNode schema) {
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
         if (status == null || status.isBlank()) status = "draft";
@@ -60,12 +64,18 @@ public class PageService {
             }
             throw e;
         }
+        // 发布即建版本（plan §3.4）
+        if ("published".equals(status)) {
+            pageVersionService.createVersion(siteId, page.getId(), schemaJson, null);
+        }
         return PageResponse.fromEntity(page);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema) {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
+        String previousStatus = page.getStatus();
         page.setName(name);
         page.setPath(path);
         page.setStatus(status != null ? status : page.getStatus());
@@ -79,6 +89,10 @@ public class PageService {
                 throw BusinessException.pagePathConflict();
             }
             throw e;
+        }
+        // 发布即建版本：仅在状态从未发布→发布时建版本（避免重复发布刷版本号）
+        if ("published".equals(page.getStatus()) && !"published".equals(previousStatus)) {
+            pageVersionService.createVersion(siteId, pageId, page.getSchemaJson(), null);
         }
         return PageResponse.fromEntity(page);
     }

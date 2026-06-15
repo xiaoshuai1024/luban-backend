@@ -3,15 +3,18 @@ package com.luban.backend.service;
 import com.luban.backend.dto.LeadSubmitRequest;
 import com.luban.backend.dto.LeadSubmitResult;
 import com.luban.backend.entity.Form;
+import com.luban.backend.entity.Site;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.LeadMapper;
+import com.luban.backend.mapper.SiteMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,13 +29,14 @@ import static org.mockito.Mockito.when;
 
 /**
  * LeadService 编排单测：mock mapper/antiSpam/notify，真实 Dedup/Crypto/StatusMachine。
- * 覆盖提交成功、去重(reject/mark)、防刷、表单不存在、contact 加密。
+ * 覆盖提交成功、去重(reject/mark)、防刷、表单不存在、contact 加密、siteId 校验（T-be-2）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeadServiceTest {
 
     @Mock private FormMapper formMapper;
     @Mock private LeadMapper leadMapper;
+    @Mock private SiteMapper siteMapper;
     @Mock private AntiSpamService antiSpamService;
     @Mock private LeadNotifyService notifyService;
 
@@ -50,9 +54,16 @@ class LeadServiceTest {
         return f;
     }
 
+    private Site sampleSite() {
+        Site s = new Site();
+        s.setId("site-1");
+        s.setName("测试站点");
+        return s;
+    }
+
     @BeforeEach
     void setup() {
-        service = new LeadService(formMapper, leadMapper, new DedupService(), antiSpamService,
+        service = new LeadService(formMapper, leadMapper, siteMapper, new DedupService(), antiSpamService,
                 new LeadCryptoService(""), new LeadStatusMachine(), notifyService);
     }
 
@@ -140,5 +151,51 @@ class LeadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("FORM_NOT_FOUND");
+    }
+
+    // ---- T-be-2: siteId 校验 ----
+
+    @Test
+    void listRejectsUnknownSiteId() {
+        when(siteMapper.getById("ghost")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.list("ghost", null, null, null, 1, 20))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("SITE_NOT_FOUND");
+        verify(leadMapper, never()).listByQuery(anyString(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void listReturnsResultForValidSiteId() {
+        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(leadMapper.listByQuery(eq("site-1"), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(leadMapper.countByQuery(eq("site-1"), any(), any(), any())).thenReturn(0);
+
+        Map<String, Object> result = service.list("site-1", null, null, null, 1, 20);
+
+        assertThat(result).containsKeys("list", "total", "page", "pageSize");
+        assertThat(result.get("total")).isEqualTo(0);
+    }
+
+    @Test
+    void getRejectsUnknownSiteId() {
+        when(siteMapper.getById("ghost")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.get("ghost", "lead-1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("SITE_NOT_FOUND");
+    }
+
+    @Test
+    void exportRejectsUnknownSiteId() {
+        when(siteMapper.getById("ghost")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.exportCsv("ghost"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("SITE_NOT_FOUND");
+        verify(leadMapper, never()).listAllForExport(anyString());
     }
 }

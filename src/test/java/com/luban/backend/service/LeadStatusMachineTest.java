@@ -19,8 +19,12 @@ class LeadStatusMachineTest {
         assertThat(machine.canTransit(LeadStatusMachine.Status.NEW, LeadStatusMachine.Status.ASSIGNED)).isTrue();
         assertThat(machine.canTransit(LeadStatusMachine.Status.NEW, LeadStatusMachine.Status.INVALID)).isTrue();
         assertThat(machine.canTransit(LeadStatusMachine.Status.ASSIGNED, LeadStatusMachine.Status.CONTACTING)).isTrue();
+        assertThat(machine.canTransit(LeadStatusMachine.Status.ASSIGNED, LeadStatusMachine.Status.INVALID)).isTrue();
+        // T-be-1: 补齐对齐 API.md §3.10 的两条转移
+        assertThat(machine.canTransit(LeadStatusMachine.Status.ASSIGNED, LeadStatusMachine.Status.LOST)).isTrue();
         assertThat(machine.canTransit(LeadStatusMachine.Status.CONTACTING, LeadStatusMachine.Status.CONVERTED)).isTrue();
         assertThat(machine.canTransit(LeadStatusMachine.Status.CONTACTING, LeadStatusMachine.Status.LOST)).isTrue();
+        assertThat(machine.canTransit(LeadStatusMachine.Status.CONTACTING, LeadStatusMachine.Status.INVALID)).isTrue();
     }
 
     @Test
@@ -29,6 +33,8 @@ class LeadStatusMachineTest {
         assertThat(machine.canTransit(LeadStatusMachine.Status.NEW, LeadStatusMachine.Status.CONVERTED)).isFalse();
         assertThat(machine.canTransit(LeadStatusMachine.Status.NEW, LeadStatusMachine.Status.LOST)).isFalse();
         assertThat(machine.canTransit(LeadStatusMachine.Status.ASSIGNED, LeadStatusMachine.Status.CONVERTED)).isFalse();
+        // NEW 不能直接到 CONTACTING（须先经 ASSIGNED）
+        assertThat(machine.canTransit(LeadStatusMachine.Status.NEW, LeadStatusMachine.Status.LOST)).isFalse();
     }
 
     @Test
