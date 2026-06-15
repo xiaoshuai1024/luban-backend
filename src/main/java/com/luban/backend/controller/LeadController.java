@@ -3,6 +3,7 @@ package com.luban.backend.controller;
 import com.luban.backend.dto.LeadResponse;
 import com.luban.backend.dto.LeadStatusUpdateRequest;
 import com.luban.backend.service.LeadService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -45,7 +46,7 @@ public class LeadController {
     public LeadResponse transitStatus(
             @RequestParam String siteId,
             @PathVariable String id,
-            @RequestBody LeadStatusUpdateRequest req,
+            @Valid @RequestBody LeadStatusUpdateRequest req,
             @RequestHeader(value = "X-User-ID", required = false) String actorId) {
         return leadService.transitStatus(siteId, id, req.status(), req.assigneeId() != null ? req.assigneeId() : actorId);
     }

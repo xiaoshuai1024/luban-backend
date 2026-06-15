@@ -10,6 +10,7 @@ import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.LeadMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -55,10 +56,14 @@ public class LeadService {
      *
      * @throws BusinessException FORM_NOT_FOUND / LEAD_SPAM_BLOCKED / LEAD_DUPLICATE
      */
+    @Transactional(rollbackFor = Exception.class)
     public LeadSubmitResult submit(LeadSubmitRequest req) {
         Form form = formMapper.getById(req.formId());
         if (form == null) {
             throw BusinessException.formNotFound();
+        }
+        if (!"active".equals(form.getStatus())) {
+            throw BusinessException.leadDisabled();
         }
 
         // 1. 防刷（IP + form 维度）
@@ -115,6 +120,7 @@ public class LeadService {
         return toResponse(getOrThrow(siteId, leadId));
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public LeadResponse transitStatus(String siteId, String leadId, String toStatusRaw, String actorId) {
         Lead lead = getOrThrow(siteId, leadId);
         LeadStatusMachine.Status from = statusMachine.parse(lead.getStatus());
@@ -172,9 +178,14 @@ public class LeadService {
             } catch (Exception ignored) {
             }
         }
+        String formName = null;
+        if (lead.getFormId() != null) {
+            Form f = formMapper.getById(lead.getFormId());
+            if (f != null) formName = f.getName();
+        }
         return new LeadResponse(lead.getId(), lead.getSiteId(), lead.getFormId(), lead.getPageId(),
                 lead.getChannelId(), masked, utm, lead.getStatus(), lead.getAssigneeId(), lead.getSourceIp(),
-                lead.getCreatedAt(), lead.getUpdatedAt(), lead.getConvertedAt());
+                lead.getCreatedAt(), lead.getUpdatedAt(), lead.getConvertedAt(), formName);
     }
 
     @SuppressWarnings("unchecked")

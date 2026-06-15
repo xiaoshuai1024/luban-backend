@@ -1,14 +1,15 @@
 package com.luban.backend.dto;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.validation.constraints.NotBlank;
 
 /**
  * 表单创建/更新请求。
  */
 public record FormSaveRequest(
-        String siteId,
+        @NotBlank String siteId,
         String pageId,
-        String name,
+        @NotBlank String name,
         JsonNode fieldSchema,
         JsonNode submitConfig,
         JsonNode dedupKeys,

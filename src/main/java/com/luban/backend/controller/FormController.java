@@ -3,6 +3,7 @@ package com.luban.backend.controller;
 import com.luban.backend.dto.FormResponse;
 import com.luban.backend.dto.FormSaveRequest;
 import com.luban.backend.service.FormService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -33,12 +34,12 @@ public class FormController {
     }
 
     @PostMapping
-    public ResponseEntity<FormResponse> create(@RequestBody FormSaveRequest req) {
+    public ResponseEntity<FormResponse> create(@Valid @RequestBody FormSaveRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(formService.create(req));
     }
 
     @PatchMapping("/{id}")
-    public FormResponse update(@RequestParam String siteId, @PathVariable String id, @RequestBody FormSaveRequest req) {
+    public FormResponse update(@RequestParam String siteId, @PathVariable String id, @Valid @RequestBody FormSaveRequest req) {
         return formService.update(siteId, id, req);
     }
 }

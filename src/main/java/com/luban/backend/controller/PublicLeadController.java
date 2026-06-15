@@ -3,6 +3,7 @@ package com.luban.backend.controller;
 import com.luban.backend.dto.LeadSubmitRequest;
 import com.luban.backend.dto.LeadSubmitResult;
 import com.luban.backend.service.LeadService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -22,7 +23,7 @@ public class PublicLeadController {
     @PostMapping("/{formId}/submit")
     public LeadSubmitResult submit(
             @PathVariable String formId,
-            @RequestBody LeadSubmitRequest body,
+            @Valid @RequestBody LeadSubmitRequest body,
             @RequestHeader(value = "X-Forwarded-For", required = false) String ip,
             @RequestHeader(value = "X-Visitor-ID", required = false) String visitorId) {
         LeadSubmitRequest req = new LeadSubmitRequest(

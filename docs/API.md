@@ -253,7 +253,10 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 | HTTP | code | 说明 |
 |------|------|------|
 | 400 | LEAD_VALIDATION_FAILED | 字段校验失败 |
+| 400 | LEAD_INVALID_STATUS | 状态值非法 |
+| 404 | LEAD_NOT_FOUND | 线索不存在 |
 | 409 | LEAD_DUPLICATE | 去重判定为重复线索 |
+| 409 | LEAD_INVALID_TRANSITION | 状态变更不允许 |
 | 429 | LEAD_SPAM_BLOCKED | 触发防刷限制 |
 | 503 | LEAD_DISABLED | 表单已禁用 |
 | 403 | LEAD_FORBIDDEN | 表单未发布 |
@@ -290,7 +293,11 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 }
 ```
 
-**状态机**：`NEW → ASSIGNED → CONTACTING → CONVERTED/LOST`（`INVALID` 可随时进入）
+**状态机**：`NEW → ASSIGNED → CONTACTING → CONVERTED/LOST`，终态为 `CONVERTED`/`INVALID`/`LOST`。合法转移：
+  - `NEW`: ASSIGNED, INVALID
+  - `ASSIGNED`: CONTACTING, INVALID, LOST
+  - `CONTACTING`: CONVERTED, LOST, INVALID
+  - 终态（CONVERTED/INVALID/LOST）不可转移
 
 **状态变更请求**：
 ```json
@@ -300,7 +307,7 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 }
 ```
 
-> **敏感字段加密**：phone/email 在入库前使用 AES-GCM 128 加密。`contact_json` 为 TEXT 类型（非 JSON），存储 base64(IV(12B) \|\| ciphertext+tag)。导出 CSV 时后端自动解密。List 接口返回脱敏后的 `contactMasked`。
+> **敏感字段加密**：phone/email 在入库前使用 AES-256-GCM (128-bit tag) 加密。`contact_json` 为 TEXT 类型（非 JSON），存储 base64(IV(12B) \|\| ciphertext+tag)。导出 CSV 时后端自动解密。List 接口返回脱敏后的 `contactMasked`。
 
 ---
 
@@ -349,6 +356,8 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 - 用户列表：`{ "list": [...], "total": number }`。
 
 本文档随 luban-backend 主后端迭代更新；新增或变更接口时请先更新本文档再实现。
+
+> **Go 后端双实现状态**：luban-backend-go（`packages/backend/luban-backend-go`）当前**尚未实现** §3.8 Forms、§3.9 Leads 公开提交 与 §3.10 Leads 管理的接口。Java 主后端已完整实现上述接口。Go 端仅包含基础的 auth、sites、pages 路由。待后续迭代补齐 lead-capture 能力。参见 `.agents/rules/luban-dual-backend-parity.md`。
 
 ---
 

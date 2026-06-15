@@ -1,6 +1,7 @@
 package com.luban.backend.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Instant;
 import java.util.Map;
@@ -21,5 +22,6 @@ public record LeadResponse(
         String sourceIp,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant createdAt,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant updatedAt,
-        @JsonFormat(shape = JsonFormat.Shape.STRING) Instant convertedAt
+        @JsonFormat(shape = JsonFormat.Shape.STRING) Instant convertedAt,
+        @JsonProperty("formName") String formName
 ) {}
