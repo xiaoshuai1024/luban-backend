@@ -6,8 +6,10 @@ import com.luban.backend.dto.LeadSubmitRequest;
 import com.luban.backend.dto.LeadSubmitResult;
 import com.luban.backend.entity.Form;
 import com.luban.backend.entity.Lead;
+import com.luban.backend.entity.LeadAuditLog;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
+import com.luban.backend.mapper.LeadAuditLogMapper;
 import com.luban.backend.mapper.LeadMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.stereotype.Service;
@@ -34,6 +36,7 @@ public class LeadService {
     private final FormMapper formMapper;
     private final LeadMapper leadMapper;
     private final SiteMapper siteMapper;
+    private final LeadAuditLogMapper leadAuditMapper;
     private final DedupService dedupService;
     private final AntiSpamService antiSpamService;
     private final LeadCryptoService cryptoService;
@@ -42,12 +45,13 @@ public class LeadService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
-                       DedupService dedupService, AntiSpamService antiSpamService,
-                       LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
-                       LeadNotifyService notifyService) {
+                       LeadAuditLogMapper leadAuditMapper, DedupService dedupService,
+                       AntiSpamService antiSpamService, LeadCryptoService cryptoService,
+                       LeadStatusMachine statusMachine, LeadNotifyService notifyService) {
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
         this.siteMapper = siteMapper;
+        this.leadAuditMapper = leadAuditMapper;
         this.dedupService = dedupService;
         this.antiSpamService = antiSpamService;
         this.cryptoService = cryptoService;
@@ -70,6 +74,14 @@ public class LeadService {
             throw BusinessException.leadDisabled();
         }
 
+        // 0. captcha 校验（T-be-4）：form 配置开启时强制
+        boolean captchaRequired = parseCaptchaRequired(form);
+        if (captchaRequired) {
+            if (!antiSpamService.verifyCaptcha(req.captchaToken())) {
+                throw BusinessException.captchaInvalid();
+            }
+        }
+
         // 1. 防刷（IP + form 维度）
         if (antiSpamService.isRateLimited(req.ip(), req.formId(), DEFAULT_RATE_MAX, DEFAULT_RATE_WINDOW_SEC)) {
             throw BusinessException.leadSpamBlocked();
@@ -83,6 +95,27 @@ public class LeadService {
         DedupService.Decision decision = dedupService.decide(exists > 0, policy);
         if (decision == DedupService.Decision.REJECT) {
             throw BusinessException.leadDuplicate();
+        }
+
+        // 2b. OVERWRITE/MERGE 策略落地（T-be-4）：命中时按策略处理旧记录
+        boolean dedupHit = exists > 0;
+        if (dedupHit) {
+            if (policy == DedupService.Policy.OVERWRITE) {
+                // 删除旧记录（窗内同 form+hash），随后插新
+                leadMapper.deleteByFormHash(req.formId(), hash);
+            } else if (policy == DedupService.Policy.MERGE) {
+                // 合并：旧 contact_json 保留旧字段 + 覆盖新提交字段，更新旧记录
+                Lead existing = leadMapper.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+                if (existing != null) {
+                    Map<String, String> merged = new LinkedHashMap<>(decryptContact(existing));
+                    merged.putAll(req.contact());
+                    leadMapper.updateContact(existing.getId(), existing.getSiteId(),
+                            cryptoService.encrypt(toJson(merged)), toJson(req.utm()), Instant.now());
+                    Lead refreshed = leadMapper.getByIdAndSiteId(existing.getId(), existing.getSiteId());
+                    notifyService.notifyNewLead(refreshed != null ? refreshed : existing, form);
+                    return new LeadSubmitResult(existing.getId(), existing.getStatus(), true);
+                }
+            }
         }
 
         // 3. 加密 contact + 构建 lead
@@ -108,12 +141,17 @@ public class LeadService {
         // 4. 通知（失败不阻塞主流程）
         notifyService.notifyNewLead(lead, form);
 
-        return new LeadSubmitResult(lead.getId(), lead.getStatus(), exists > 0);
+        return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
     }
 
     /** 线索中心：列表（分页 + 筛选，contact 脱敏）。校验 siteId 存在以强化多租户隔离（T-be-2）。 */
-    public Map<String, Object> list(String siteId, String status, String formId, String assigneeId, int page, int size) {
+    public Map<String, Object> list(String siteId, String status, String formId, String assigneeId,
+                                    String keyword, int page, int size) {
         ensureSiteExists(siteId);
+        // keyword 搜索需匹配加密 contact，须在应用层解密过滤（T-be-3）
+        if (keyword != null && !keyword.isBlank()) {
+            return listWithKeyword(siteId, status, formId, assigneeId, keyword.trim(), page, size);
+        }
         int offset = Math.max(0, (page - 1) * size);
         List<Lead> leads = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
         int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
@@ -121,9 +159,49 @@ public class LeadService {
         return Map.of("list", respList, "total", total, "page", page, "pageSize", size);
     }
 
+    /**
+     * keyword 搜索（T-be-3）：contact 加密无法 SQL LIKE，需拉取后解密匹配。
+     * 为控制内存，单次最多扫描 MAX_KEYWORD_SCAN 条，分页在匹配结果上做。
+     */
+    private Map<String, Object> listWithKeyword(String siteId, String status, String formId, String assigneeId,
+                                                String keyword, int page, int size) {
+        int scanLimit = 500; // 单次最多扫描 500 条，避免全表解密
+        List<Lead> all = leadMapper.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
+        String kw = keyword.toLowerCase();
+        List<LeadResponse> matched = all.stream()
+                .map(l -> {
+                    // 解密 contact 后做大小写不敏感包含匹配
+                    Map<String, String> c = decryptContact(l);
+                    boolean hit = c.values().stream()
+                            .anyMatch(v -> v != null && v.toLowerCase().contains(kw));
+                    return hit ? toResponse(l) : null;
+                })
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        int total = matched.size();
+        int offset = Math.max(0, (page - 1) * size);
+        int end = Math.min(offset + size, total);
+        List<LeadResponse> pageList = offset < total ? matched.subList(offset, end) : List.of();
+        return Map.of("list", pageList, "total", total, "page", page, "pageSize", size);
+    }
+
     public LeadResponse get(String siteId, String leadId) {
         ensureSiteExists(siteId);
         return toResponse(getOrThrow(siteId, leadId));
+    }
+
+    /**
+     * 解密查看完整联系方式（T-be-5，安全敏感）。
+     * 写 lead_audit_logs(action=VIEW_CONTACT)；返回明文（仅本次响应，不缓存）。
+     */
+    public Map<String, String> getContact(String siteId, String leadId, String actorId) {
+        ensureSiteExists(siteId);
+        Lead lead = getOrThrow(siteId, leadId);
+        Map<String, String> contact = decryptContact(lead);
+        // 审计：记录谁在何时查看了哪条线索的联系方式
+        leadAuditMapper.insert(newAuditLog(siteId, leadId, actorId, "VIEW_CONTACT",
+                toJson(Map.of("formId", lead.getFormId() != null ? lead.getFormId() : ""))));
+        return contact;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -139,6 +217,9 @@ public class LeadService {
         lead.setStatus(to.name().toLowerCase());
         lead.setAssigneeId(assignee);
         lead.setConvertedAt(convertedAt);
+        // 审计：状态转移（plan §3.1 审计口径）
+        leadAuditMapper.insert(newAuditLog(siteId, leadId, actorId, "STATUS_TRANSIT",
+                toJson(Map.of("from", from.name().toLowerCase(), "to", to.name().toLowerCase()))));
         return toResponse(lead);
     }
 
@@ -234,6 +315,32 @@ public class LeadService {
         } catch (IllegalArgumentException e) {
             return DedupService.Policy.REJECT;
         }
+    }
+
+    /** 从 form.antiSpamJson 解析是否要求 captcha（T-be-4）。 */
+    @SuppressWarnings("unchecked")
+    private boolean parseCaptchaRequired(Form form) {
+        if (form.getAntiSpamJson() == null || form.getAntiSpamJson().isBlank()) return false;
+        try {
+            Map<String, Object> cfg = objectMapper.readValue(form.getAntiSpamJson(), Map.class);
+            Object v = cfg.get("captchaRequired");
+            return Boolean.TRUE.equals(v);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 构建审计日志实体（VIEW_CONTACT / STATUS_TRANSIT）。 */
+    private LeadAuditLog newAuditLog(String siteId, String leadId, String actorId, String action, String detail) {
+        LeadAuditLog log = new LeadAuditLog();
+        log.setId(UUID.randomUUID().toString());
+        log.setSiteId(siteId);
+        log.setLeadId(leadId);
+        log.setActorId(actorId != null ? actorId : "system");
+        log.setAction(action);
+        log.setDetail(detail);
+        log.setCreatedAt(Instant.now());
+        return log;
     }
 
     private String toJson(Object obj) {

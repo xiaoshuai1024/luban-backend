@@ -3,9 +3,11 @@ package com.luban.backend.service;
 import com.luban.backend.dto.LeadSubmitRequest;
 import com.luban.backend.dto.LeadSubmitResult;
 import com.luban.backend.entity.Form;
+import com.luban.backend.entity.Lead;
 import com.luban.backend.entity.Site;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
+import com.luban.backend.mapper.LeadAuditLogMapper;
 import com.luban.backend.mapper.LeadMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,7 +31,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * LeadService 编排单测：mock mapper/antiSpam/notify，真实 Dedup/Crypto/StatusMachine。
- * 覆盖提交成功、去重(reject/mark)、防刷、表单不存在、contact 加密、siteId 校验（T-be-2）。
+ * 覆盖提交成功、去重(reject/mark/overwrite/merge)、防刷、captcha、表单不存在、
+ * contact 加密、siteId 校验（T-be-2）、keyword 搜索（T-be-3）、解密查看（T-be-5）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeadServiceTest {
@@ -37,6 +40,7 @@ class LeadServiceTest {
     @Mock private FormMapper formMapper;
     @Mock private LeadMapper leadMapper;
     @Mock private SiteMapper siteMapper;
+    @Mock private LeadAuditLogMapper leadAuditMapper;
     @Mock private AntiSpamService antiSpamService;
     @Mock private LeadNotifyService notifyService;
 
@@ -63,7 +67,8 @@ class LeadServiceTest {
 
     @BeforeEach
     void setup() {
-        service = new LeadService(formMapper, leadMapper, siteMapper, new DedupService(), antiSpamService,
+        service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper,
+                new DedupService(), antiSpamService,
                 new LeadCryptoService(""), new LeadStatusMachine(), notifyService);
     }
 
@@ -159,7 +164,7 @@ class LeadServiceTest {
     void listRejectsUnknownSiteId() {
         when(siteMapper.getById("ghost")).thenReturn(null);
 
-        assertThatThrownBy(() -> service.list("ghost", null, null, null, 1, 20))
+        assertThatThrownBy(() -> service.list("ghost", null, null, null, null, 1, 20))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("SITE_NOT_FOUND");
@@ -172,10 +177,19 @@ class LeadServiceTest {
         when(leadMapper.listByQuery(eq("site-1"), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
         when(leadMapper.countByQuery(eq("site-1"), any(), any(), any())).thenReturn(0);
 
-        Map<String, Object> result = service.list("site-1", null, null, null, 1, 20);
+        Map<String, Object> result = service.list("site-1", null, null, null, null, 1, 20);
 
         assertThat(result).containsKeys("list", "total", "page", "pageSize");
         assertThat(result.get("total")).isEqualTo(0);
+    }
+
+    @Test
+    void listRejectsUnknownSiteIdNoKeyword() {
+        when(siteMapper.getById("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> service.list("ghost", null, null, null, null, 1, 20))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("SITE_NOT_FOUND");
     }
 
     @Test
@@ -197,5 +211,131 @@ class LeadServiceTest {
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("SITE_NOT_FOUND");
         verify(leadMapper, never()).listAllForExport(anyString());
+    }
+
+    // ---- T-be-4: OVERWRITE / MERGE / captcha ----
+
+    @Test
+    void submitDuplicateOverwriteDeletesOldAndInsertsNew() {
+        Form f = sampleForm();
+        f.setDedupPolicy("overwrite");
+        when(formMapper.getById("form-1")).thenReturn(f);
+        when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
+        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+
+        LeadSubmitResult result = service.submit(req("13800000001"));
+
+        assertThat(result.dedup()).isTrue();
+        // 删除旧记录 + 插入新记录
+        verify(leadMapper).deleteByFormHash(eq("form-1"), anyString());
+        verify(leadMapper).insert(any());
+    }
+
+    @Test
+    void submitDuplicateMergeUpdatesExisting() {
+        Form f = sampleForm();
+        f.setDedupPolicy("merge");
+        when(formMapper.getById("form-1")).thenReturn(f);
+        when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
+        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+        // 旧记录（contact 已加密）
+        Lead existing = new Lead();
+        existing.setId("lead-old");
+        existing.setSiteId("site-1");
+        existing.setStatus("new");
+        LeadCryptoService crypto = new LeadCryptoService("");
+        existing.setContactJson(crypto.encrypt("{\"phone\":\"13800000001\"}"));
+        when(leadMapper.getByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(existing);
+
+        LeadSubmitResult result = service.submit(req("13800000001"));
+
+        assertThat(result.dedup()).isTrue();
+        assertThat(result.leadId()).isEqualTo("lead-old");
+        // MERGE：更新旧记录（不插新）
+        verify(leadMapper).updateContact(eq("lead-old"), eq("site-1"), anyString(), any(), any());
+        verify(leadMapper, never()).insert(any());
+    }
+
+    @Test
+    void submitCaptchaRequiredAndInvalidThrows() {
+        Form f = sampleForm();
+        f.setAntiSpamJson("{\"captchaRequired\":true}");
+        when(formMapper.getById("form-1")).thenReturn(f);
+        when(antiSpamService.verifyCaptcha(null)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.submit(req("13800000001")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("LEAD_CAPTCHA_INVALID");
+        verify(leadMapper, never()).insert(any());
+    }
+
+    // ---- T-be-3: keyword 搜索 ----
+
+    @Test
+    void listWithKeywordFiltersByDecryptedContact() {
+        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        Lead l = new Lead();
+        l.setId("l1");
+        l.setSiteId("site-1");
+        l.setFormId("form-1");
+        l.setStatus("new");
+        l.setDedupHash("h");
+        LeadCryptoService crypto = new LeadCryptoService("");
+        l.setContactJson(crypto.encrypt("{\"phone\":\"13800000001\",\"name\":\"张三\"}"));
+        java.time.Instant now = java.time.Instant.now();
+        l.setCreatedAt(now);
+        l.setUpdatedAt(now);
+        Lead l2 = new Lead();
+        l2.setId("l2");
+        l2.setSiteId("site-1");
+        l2.setFormId("form-1");
+        l2.setStatus("new");
+        l2.setDedupHash("h2");
+        l2.setContactJson(crypto.encrypt("{\"phone\":\"13900000000\",\"name\":\"李四\"}"));
+        l2.setCreatedAt(now);
+        l2.setUpdatedAt(now);
+        when(leadMapper.listByQuery(eq("site-1"), any(), any(), any(), eq(0), anyInt()))
+                .thenReturn(List.of(l, l2));
+
+        Map<String, Object> result = service.list("site-1", null, null, null, "张三", 1, 20);
+
+        assertThat(((Number) result.get("total")).intValue()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        List<com.luban.backend.dto.LeadResponse> list =
+                (List<com.luban.backend.dto.LeadResponse>) result.get("list");
+        assertThat(list).hasSize(1);
+    }
+
+    // ---- T-be-5: 解密查看 + 审计 ----
+
+    @Test
+    void getContactReturnsDecryptedAndWritesAudit() {
+        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        Lead l = new Lead();
+        l.setId("l1");
+        l.setSiteId("site-1");
+        l.setFormId("form-1");
+        l.setStatus("new");
+        LeadCryptoService crypto = new LeadCryptoService("");
+        l.setContactJson(crypto.encrypt("{\"phone\":\"13812345678\",\"name\":\"张三\"}"));
+        when(leadMapper.getByIdAndSiteId("l1", "site-1")).thenReturn(l);
+
+        Map<String, String> contact = service.getContact("site-1", "l1", "user-9");
+
+        assertThat(contact.get("phone")).isEqualTo("13812345678");
+        assertThat(contact.get("name")).isEqualTo("张三");
+        // 审计日志写入
+        verify(leadAuditMapper).insert(any());
+    }
+
+    @Test
+    void getContactRejectsUnknownSiteId() {
+        when(siteMapper.getById("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> service.getContact("ghost", "l1", "user-9"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("SITE_NOT_FOUND");
+        verify(leadAuditMapper, never()).insert(any());
     }
 }

@@ -64,4 +64,25 @@ public interface LeadMapper {
 
     @Select("SELECT " + COLS + " FROM leads WHERE site_id = #{siteId} ORDER BY created_at DESC")
     List<Lead> listAllForExport(@Param("siteId") String siteId);
+
+    /**
+     * 查询窗口内同 form+dedup_hash 的线索（用于 OVERWRITE/MERGE 去重策略，T-be-4）。
+     * 返回命中记录（最多 1 条，因 uk_form_dedup 唯一约束）。
+     */
+    @Select("SELECT " + COLS + " FROM leads WHERE form_id = #{formId} AND dedup_hash = #{hash} "
+            + "AND created_at >= DATE_SUB(NOW(), INTERVAL #{windowSeconds} SECOND) "
+            + "ORDER BY created_at DESC LIMIT 1")
+    Lead getByFormHashInWindow(@Param("formId") String formId, @Param("hash") String hash,
+                               @Param("windowSeconds") int windowSeconds);
+
+    /** 按 form+hash 删除（OVERWRITE 策略：删旧插新，T-be-4）。 */
+    @Delete("DELETE FROM leads WHERE form_id = #{formId} AND dedup_hash = #{hash}")
+    int deleteByFormHash(@Param("formId") String formId, @Param("hash") String hash);
+
+    /** 按 id 删除审计/线索（MERGE 策略更新旧记录后无须删除；备用）。 */
+    @Update("UPDATE leads SET contact_json = #{contactJson}, utm_json = #{utmJson}, "
+            + "updated_at = #{updatedAt} WHERE id = #{id} AND site_id = #{siteId}")
+    int updateContact(@Param("id") String id, @Param("siteId") String siteId,
+                      @Param("contactJson") String contactJson, @Param("utmJson") String utmJson,
+                      @Param("updatedAt") java.time.Instant updatedAt);
 }

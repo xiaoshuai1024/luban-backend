@@ -131,7 +131,7 @@ class LeadServiceIntegrationTest {
                 formId, Map.of("phone", "13800011111"), null, null, null, uniqueIp(), "v-list", null));
 
         @SuppressWarnings("unchecked")
-        java.util.Map<String, Object> page = leadService.list(form.getSiteId(), null, null, null, 1, 20);
+        java.util.Map<String, Object> page = leadService.list(form.getSiteId(), null, null, null, null, 1, 20);
         assertThat(((Number) page.get("total")).intValue()).isGreaterThan(0);
 
         @SuppressWarnings("unchecked")

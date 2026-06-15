@@ -32,14 +32,27 @@ public class LeadController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "formId", required = false) String formId,
             @RequestParam(value = "assigneeId", required = false) String assigneeId,
+            @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return leadService.list(siteId, status, formId, assigneeId, page, size);
+        return leadService.list(siteId, status, formId, assigneeId, keyword, page, size);
     }
 
     @GetMapping("/{id}")
     public LeadResponse get(@RequestParam String siteId, @PathVariable String id) {
         return leadService.get(siteId, id);
+    }
+
+    /**
+     * 解密查看完整联系方式（T-be-5，安全敏感）：写审计日志，返回明文。
+     * 鉴权由 BFF 注入 X-User-ID；多租户按 siteId 隔离。
+     */
+    @GetMapping("/{id}/contact")
+    public Map<String, String> getContact(
+            @RequestParam String siteId,
+            @PathVariable String id,
+            @RequestHeader(value = "X-User-ID", required = false) String actorId) {
+        return leadService.getContact(siteId, id, actorId);
     }
 
     @PatchMapping("/{id}/status")
