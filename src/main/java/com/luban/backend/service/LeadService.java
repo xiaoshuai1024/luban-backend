@@ -37,6 +37,7 @@ public class LeadService {
     private final LeadMapper leadMapper;
     private final SiteMapper siteMapper;
     private final LeadAuditLogMapper leadAuditMapper;
+    private final TenantGuardService tenantGuard;
     private final DedupService dedupService;
     private final AntiSpamService antiSpamService;
     private final LeadCryptoService cryptoService;
@@ -45,13 +46,15 @@ public class LeadService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
-                       LeadAuditLogMapper leadAuditMapper, DedupService dedupService,
-                       AntiSpamService antiSpamService, LeadCryptoService cryptoService,
-                       LeadStatusMachine statusMachine, LeadNotifyService notifyService) {
+                       LeadAuditLogMapper leadAuditMapper, TenantGuardService tenantGuard,
+                       DedupService dedupService, AntiSpamService antiSpamService,
+                       LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
+                       LeadNotifyService notifyService) {
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
         this.siteMapper = siteMapper;
         this.leadAuditMapper = leadAuditMapper;
+        this.tenantGuard = tenantGuard;
         this.dedupService = dedupService;
         this.antiSpamService = antiSpamService;
         this.cryptoService = cryptoService;
@@ -297,11 +300,12 @@ public class LeadService {
         return lead;
     }
 
-    /** 校验 siteId 存在，强化多租户隔离（T-be-2）。 */
+    /** 校验 siteId 存在 + 当前用户有权访问（🟡 tenant authz）。 */
     private void ensureSiteExists(String siteId) {
         if (siteId == null || siteId.isBlank() || siteMapper.getById(siteId) == null) {
             throw BusinessException.siteNotFound();
         }
+        tenantGuard.ensureSiteAccess(siteId);
     }
 
     /** 转响应：contact 解密后脱敏（phone/email）。 */

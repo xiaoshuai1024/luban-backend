@@ -1,9 +1,10 @@
 package com.luban.backend.service;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
+import java.util.List;
 
 /**
  * 留资防刷：基于 Redis 的固定窗口频控（维度 IP + formId）+ 验证码占位。
@@ -20,6 +21,7 @@ public class AntiSpamService {
 
     /**
      * 固定窗口频控。返回 true 表示已达阈值，应拒绝（LEAD_SPAM_BLOCKED）。
+     * 用 Lua 脚本保证 INCR + EXPIRE 原子性（🟡 修复 lost-expiry race）。
      *
      * @param ip             客户端 IP（X-Forwarded-For）
      * @param formId         表单 ID
@@ -31,11 +33,25 @@ public class AntiSpamService {
             return false;
         }
         String key = key(ip, formId);
-        Long count = redis.opsForValue().increment(key);
-        if (count != null && count == 1L) {
-            redis.expire(key, Duration.ofSeconds(windowSeconds));
-        }
+        // 原子 INCR + 仅首次 EXPIRE（Lua 脚本，避免进程崩溃导致计数 key 永不过期 → 永久限流）
+        Long count = redis.execute(
+                RATE_LIMIT_SCRIPT,
+                List.of(key),
+                String.valueOf(windowSeconds)
+        );
         return count != null && count > max;
+    }
+
+    /** Lua：原子 INCR + 仅首次 EXPIRE。 */
+    private static final DefaultRedisScript<Long> RATE_LIMIT_SCRIPT;
+    static {
+        RATE_LIMIT_SCRIPT = new DefaultRedisScript<>();
+        RATE_LIMIT_SCRIPT.setScriptText(
+                "local c = redis.call('INCR', KEYS[1]) " +
+                "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1])) end " +
+                "return c"
+        );
+        RATE_LIMIT_SCRIPT.setResultType(Long.class);
     }
 
     /**

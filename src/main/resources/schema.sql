@@ -119,3 +119,13 @@ CREATE TABLE IF NOT EXISTS lead_audit_logs (
     created_at DATETIME(3) NOT NULL,
     KEY idx_audit_lead (site_id, lead_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 用户-站点授权映射（🟡 tenant authz：非 admin 用户仅能访问已授权站点）
+CREATE TABLE IF NOT EXISTS user_sites (
+    user_id  VARCHAR(36) NOT NULL,
+    site_id  VARCHAR(36) NOT NULL,
+    role     VARCHAR(16) NOT NULL DEFAULT 'member',
+    created_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (user_id, site_id),
+    KEY idx_us_site (site_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

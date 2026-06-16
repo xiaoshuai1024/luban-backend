@@ -10,6 +10,7 @@ import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.LeadAuditLogMapper;
 import com.luban.backend.mapper.LeadMapper;
 import com.luban.backend.mapper.SiteMapper;
+import com.luban.backend.mapper.UserSiteMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,9 +31,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * LeadService 编排单测：mock mapper/antiSpam/notify，真实 Dedup/Crypto/StatusMachine。
+ * LeadService 编排单测：mock mapper/antiSpam/notify，真实 Dedup/Crypto/StatusMachine/TenantGuard。
  * 覆盖提交成功、去重(reject/mark/overwrite/merge)、防刷、captcha、表单不存在、
- * contact 加密、siteId 校验（T-be-2）、keyword 搜索（T-be-3）、解密查看（T-be-5）。
+ * contact 加密、siteId 校验（T-be-2）、keyword 搜索（T-be-3）、解密查看（T-be-5）、tenant authz（🟡）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeadServiceTest {
@@ -41,6 +42,7 @@ class LeadServiceTest {
     @Mock private LeadMapper leadMapper;
     @Mock private SiteMapper siteMapper;
     @Mock private LeadAuditLogMapper leadAuditMapper;
+    @Mock private UserSiteMapper userSiteMapper;
     @Mock private AntiSpamService antiSpamService;
     @Mock private LeadNotifyService notifyService;
 
@@ -67,7 +69,8 @@ class LeadServiceTest {
 
     @BeforeEach
     void setup() {
-        service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper,
+        TenantGuardService tenantGuard = new TenantGuardService(userSiteMapper);
+        service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper, tenantGuard,
                 new DedupService(), antiSpamService,
                 new LeadCryptoService(""), new LeadStatusMachine(), notifyService);
     }

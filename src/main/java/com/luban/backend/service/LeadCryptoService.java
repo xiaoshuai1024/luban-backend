@@ -56,13 +56,12 @@ public class LeadCryptoService {
             return DEV_FALLBACK_KEY;
         }
         byte[] k = Base64.getDecoder().decode(keyB64);
-        if (k.length != 32 && k.length != 16) {
-            throw new IllegalArgumentException("LEAD_ENC_KEY 须为 16 或 32 字节 base64，实际 " + k.length);
-        }
-        if (k.length == 16) {
-            byte[] k32 = new byte[32];
-            System.arraycopy(k, 0, k32, 0, 16);
-            return k32;
+        // 🟡 修复：拒绝 16 字节 key 零填充（削弱密钥强度），强制 32 字节 AES-256
+        if (k.length != 32) {
+            throw new IllegalArgumentException(
+                "LEAD_ENC_KEY 必须为 32 字节 base64（AES-256），实际 " + k.length + " 字节。" +
+                "用 openssl rand -base64 32 生成。"
+            );
         }
         return k;
     }

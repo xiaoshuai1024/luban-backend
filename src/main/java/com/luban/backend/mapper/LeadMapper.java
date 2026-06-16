@@ -62,16 +62,16 @@ public interface LeadMapper {
                      @Param("status") String status, @Param("assigneeId") String assigneeId,
                      @Param("convertedAt") Instant convertedAt, @Param("updatedAt") Instant updatedAt);
 
-    @Select("SELECT " + COLS + " FROM leads WHERE site_id = #{siteId} ORDER BY created_at DESC")
+    @Select("SELECT " + COLS + " FROM leads WHERE site_id = #{siteId} ORDER BY created_at DESC LIMIT 10000")
     List<Lead> listAllForExport(@Param("siteId") String siteId);
 
-    /** 导出（带筛选，修复 🔴 export 忽略 filter 参数）。 */
+    /** 导出（带筛选，修复 🔴 export 忽略 filter 参数）。🟡 增 LIMIT 10000 防 OOM。 */
     @Select("<script>"
             + "SELECT " + COLS + " FROM leads WHERE site_id = #{siteId}"
             + "<if test='status != null and status != \"\"'> AND status = #{status}</if>"
             + "<if test='formId != null and formId != \"\"'> AND form_id = #{formId}</if>"
             + "<if test='assigneeId != null and assigneeId != \"\"'> AND assignee_id = #{assigneeId}</if>"
-            + " ORDER BY created_at DESC"
+            + " ORDER BY created_at DESC LIMIT 10000"
             + "</script>")
     List<Lead> listForExport(@Param("siteId") String siteId,
                              @Param("status") String status,
