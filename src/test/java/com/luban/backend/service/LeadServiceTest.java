@@ -85,8 +85,6 @@ class LeadServiceTest {
         when(formMapper.getById("form-1")).thenReturn(sampleForm());
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
         when(leadMapper.countByFormHashInWindow(eq("form-1"), anyString(), anyInt())).thenReturn(0);
-        // submit() 事务提交后会二次查询 lead 用于通知
-        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(null);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
@@ -94,7 +92,7 @@ class LeadServiceTest {
         assertThat(result.dedup()).isFalse();
         assertThat(result.leadId()).isNotBlank();
         verify(leadMapper).insert(any());
-        // notify 在事务外调用（lead 为 null 时跳过，但不报错）
+        // notify 通过 afterCommit 回调执行；单元测试无事务上下文时不触发（需集成测试验证）
     }
 
     @Test
@@ -227,7 +225,6 @@ class LeadServiceTest {
         when(formMapper.getById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
         when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
-        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(null);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
@@ -252,8 +249,6 @@ class LeadServiceTest {
         LeadCryptoService crypto = new LeadCryptoService("");
         existing.setContactJson(crypto.encrypt("{\"phone\":\"13800000001\"}"));
         when(leadMapper.getByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(existing);
-        // MERGE 分支内部 + post-commit notify 都会查询
-        when(leadMapper.getByIdAndSiteId(anyString(), anyString())).thenReturn(existing);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 

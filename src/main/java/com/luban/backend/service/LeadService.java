@@ -64,27 +64,13 @@ public class LeadService {
 
     /**
      * 留资提交（公开入口核心编排）。
+     * 事务内完成所有 DB 写入；notify 通过 afterCommit 回调在事务提交后执行
+     * （修复 🔴 notify-in-txn + 🟡 Spring self-invocation：单一 @Transactional 方法避免代理失效）。
      *
      * @throws BusinessException FORM_NOT_FOUND / LEAD_SPAM_BLOCKED / LEAD_DUPLICATE
      */
-    public LeadSubmitResult submit(LeadSubmitRequest req) {
-        // 通知移到事务外（修复 🔴 notify-in-txn）：先持久化，提交后再通知
-        LeadSubmitResult result = doSubmit(req);
-        // 事务已提交，通知失败不影响 lead（非阻塞）
-        try {
-            Form form = formMapper.getById(req.formId());
-            if (form != null) {
-                Lead saved = leadMapper.getByIdAndSiteId(result.leadId(), form.getSiteId());
-                if (saved != null) notifyService.notifyNewLead(saved, form);
-            }
-        } catch (Exception e) {
-            // 通知失败不阻塞主流程（lead 已持久化）
-        }
-        return result;
-    }
-
     @Transactional(rollbackFor = Exception.class)
-    protected LeadSubmitResult doSubmit(LeadSubmitRequest req) {
+    public LeadSubmitResult submit(LeadSubmitRequest req) {
         Form form = formMapper.getById(req.formId());
         if (form == null) {
             throw BusinessException.formNotFound();
@@ -116,14 +102,12 @@ public class LeadService {
             throw BusinessException.leadDuplicate();
         }
 
-        // 2b. OVERWRITE/MERGE 策略落地（T-be-4）：命中时按策略处理旧记录
+        // 2b. OVERWRITE/MERGE 策略落地（T-be-4）
         boolean dedupHit = exists > 0;
         if (dedupHit) {
             if (policy == DedupService.Policy.OVERWRITE) {
-                // 仅删除窗内旧记录（修复 🔴 delete 跨窗口误删），随后插新
                 leadMapper.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
             } else if (policy == DedupService.Policy.MERGE) {
-                // 合并：旧 contact + 新 contact 字段覆盖；utm 也合并（修复 🔴 MERGE 丢弃旧 utm）
                 Lead existing = leadMapper.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
                 if (existing != null) {
                     Map<String, String> mergedContact = new LinkedHashMap<>(decryptContact(existing));
@@ -131,14 +115,14 @@ public class LeadService {
                     String mergedUtm = mergeUtm(existing.getUtmJson(), req.utm());
                     leadMapper.updateContact(existing.getId(), existing.getSiteId(),
                             cryptoService.encrypt(toJson(mergedContact)), mergedUtm, Instant.now());
-                    Lead refreshed = leadMapper.getByIdAndSiteId(existing.getId(), existing.getSiteId());
-                    String status = refreshed != null ? refreshed.getStatus() : existing.getStatus();
-                    return new LeadSubmitResult(existing.getId(), status, true);
+                    // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚）
+                    registerAfterCommitNotify(existing.getId(), form);
+                    return new LeadSubmitResult(existing.getId(), existing.getStatus(), true);
                 }
             }
         }
 
-        // 3. 加密 contact + 构建 lead（OVERWRITE 并发竞争：uk_form_dedup 唯一约束冲突时降级为 MARK）
+        // 3. 加密 contact + 构建 lead
         String encryptedContact = cryptoService.encrypt(toJson(req.contact()));
         Lead lead = new Lead();
         lead.setId(UUID.randomUUID().toString());
@@ -159,12 +143,33 @@ public class LeadService {
         try {
             leadMapper.insert(lead);
         } catch (org.springframework.dao.DuplicateKeyException e) {
-            // OVERWRITE 并发：两条提交同时通过 count 检查 → 都删除 → 第二条 insert 撞唯一键
-            // 降级为重复标记（修复 🔴 并发 500）
+            // OVERWRITE 并发竞争：降级为重复标记
             lead.setStatus(LeadStatusMachine.Status.INVALID.name().toLowerCase());
         }
 
+        // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚 lead）
+        registerAfterCommitNotify(lead.getId(), form);
+
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
+    }
+
+    /** 注册 afterCommit 回调：事务提交后发通知，失败不回滚 lead。 */
+    private void registerAfterCommitNotify(String leadId, Form form) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            Lead saved = leadMapper.getByIdAndSiteId(leadId, form.getSiteId());
+                            if (saved != null) notifyService.notifyNewLead(saved, form);
+                        } catch (Exception e) {
+                            // 通知失败不阻塞（lead 已提交）
+                        }
+                    }
+                }
+            );
+        }
     }
 
     /** 合并 utm：旧值 + 新值（新值覆盖同名 key）。 */
