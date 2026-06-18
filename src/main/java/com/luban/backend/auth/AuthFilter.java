@@ -45,7 +45,7 @@ public class AuthFilter implements Filter {
             if (role != null) role = role.trim();
             UserContext.set(userId != null ? userId : "", role != null ? role : "");
 
-            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/")) {
+            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/") || path.startsWith("/backend/lead/forms")) {
                 chain.doFilter(request, response);
                 return;
             }
