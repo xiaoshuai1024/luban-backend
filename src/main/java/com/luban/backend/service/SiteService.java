@@ -45,7 +45,7 @@ public class SiteService {
         try {
             siteMapper.insert(site);
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
+            if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
             }
             throw e;
@@ -65,12 +65,25 @@ public class SiteService {
             int n = siteMapper.update(site);
             if (n == 0) throw BusinessException.siteNotFound();
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
+            if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
             }
             throw e;
         }
         return SiteResponse.fromEntity(site);
+    }
+
+    /**
+     * Detect a UNIQUE-constraint violation across DB drivers:
+     *   - MySQL: "Duplicate entry ..." (matches Go isDuplicateErr in site_repo.go)
+     *   - H2 (MySQL mode, used in tests): "Unique index or primary key violation"
+     *
+     * Behavior on real MySQL is byte-identical to the prior "Duplicate" check.
+     */
+    private static boolean isUniqueViolation(DataIntegrityViolationException e) {
+        if (e == null || e.getMessage() == null) return false;
+        String m = e.getMessage();
+        return m.contains("Duplicate") || m.contains("Unique index") || m.contains("primary key violation");
     }
 
     public void delete(String id) {

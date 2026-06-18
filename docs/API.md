@@ -67,6 +67,46 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 
 单行 JSON 存储，示例：`siteName`、`logo`、`security`、`notification` 等。
 
+### 2.5 Form
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | string | UUID |
+| siteId | string | 所属站点 |
+| pageId | string | 关联页面 |
+| name | string | 表单名称 |
+| fieldSchemaJson | JSON | 表单字段定义（fields 数组） |
+| submitConfigJson | JSON | 提交配置（mode/redirectUrl/popupTitle/toastMessage） |
+| dedupKeysJson | JSON | 去重字段列表 |
+| dedupWindow | int | 去重窗口（秒），默认 86400 |
+| dedupPolicy | string | `reject` / `mark` / `overwrite` / `merge` |
+| antiSpamJson | JSON | 防刷配置 |
+| status | string | `active` / `disabled` |
+| createdAt | datetime | 创建时间 |
+| updatedAt | datetime | 更新时间 |
+
+### 2.6 Lead
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | string | UUID |
+| siteId | string | 所属站点 |
+| formId | string | 来源表单 |
+| pageId | string | 来源页面 |
+| channelId | string? | 渠道标识 |
+| contactJson | TEXT | AES 加密后的联系人 JSON（TEXT 而非 JSON 类型，因密文不是合法 JSON） |
+| utmJson | JSON? | UTM 跟踪参数 |
+| status | string | `new` / `assigned` / `contacting` / `converted` / `lost` / `invalid` |
+| assigneeId | string? | 跟进人 |
+| dedupHash | string | sha256(formId + ":" + sorted dedup key values) |
+| sourceIp | string? | 来源 IP |
+| visitorId | string? | 访客 ID |
+| convertedAt | datetime? | 转化时间 |
+| createdAt | datetime | 创建时间 |
+| updatedAt | datetime | 更新时间 |
+
+唯一约束：`uk_form_dedup (form_id, dedup_hash)`
+
 ---
 
 ## 3. HTTP API（Base Path: `/backend`）
@@ -133,6 +173,142 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 - 响应 200：与「GET /backend/sites/:id/pages/:pageId」同结构的 Page（含 schema）。
 - 404：站点不存在或该路径下无已发布页面。
 
+### 3.8 Forms（表单配置）
+
+表单管理接口（管理端，BFF 注入 X-User-ID/X-User-Role）。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET    | /backend/forms       | RequireUser  | 列表（query: siteId） |
+| POST   | /backend/forms       | RequireUser  | 创建（body: FormSaveRequest） |
+| GET    | /backend/forms/:id   | RequireUser  | 单条（query: siteId） |
+| PATCH  | /backend/forms/:id   | RequireUser  | 更新（query: siteId, body: FormSaveRequest） |
+
+**FormSaveRequest**：
+```json
+{
+  "siteId": "string",
+  "pageId": "string",
+  "name": "表单名称",
+  "fieldSchema": { "fields": [] },
+  "submitConfig": { "mode": "redirect", "redirectUrl": "/thanks" },
+  "dedupKeys": ["phone", "email"],
+  "dedupWindow": 86400,
+  "dedupPolicy": "reject",
+  "antiSpam": { "rateLimit": { "max": 10, "windowSeconds": 60 } },
+  "status": "active"
+}
+```
+
+**FormResponse**：
+```json
+{
+  "id": "uuid",
+  "siteId": "uuid",
+  "pageId": "uuid",
+  "name": "表单名称",
+  "fieldSchema": { ... },
+  "submitConfig": { ... },
+  "dedupKeys": ["phone"],
+  "dedupWindow": 86400,
+  "dedupPolicy": "reject",
+  "antiSpam": { ... },
+  "status": "active",
+  "createdAt": "2026-06-15T10:00:00Z",
+  "updatedAt": "2026-06-15T10:00:00Z"
+}
+```
+
+### 3.9 Leads（销售线索公开提交）
+
+对外站点表单提交接口（无需鉴权）。访问者填写表单后 POST 到此接口。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| POST | /backend/lead/forms/:formId/submit | 无 | 表单提交 |
+
+**LeadSubmitRequest**：
+```json
+{
+  "formId": "uuid",
+  "contact": { "phone": "13800138000", "name": "张三" },
+  "pageId": "uuid",
+  "channelId": "wechat",
+  "utm": { "source": "google", "campaign": "spring_sale" },
+  "captchaToken": "optional"
+}
+```
+
+响应 200（**LeadSubmitResult**）：
+```json
+{
+  "leadId": "uuid",
+  "status": "new",
+  "dedup": false
+}
+```
+
+**错误码**：
+
+| HTTP | code | 说明 |
+|------|------|------|
+| 400 | LEAD_VALIDATION_FAILED | 字段校验失败 |
+| 400 | LEAD_INVALID_STATUS | 状态值非法 |
+| 404 | LEAD_NOT_FOUND | 线索不存在 |
+| 409 | LEAD_DUPLICATE | 去重判定为重复线索 |
+| 409 | LEAD_INVALID_TRANSITION | 状态变更不允许 |
+| 429 | LEAD_SPAM_BLOCKED | 触发防刷限制 |
+| 503 | LEAD_DISABLED | 表单已禁用 |
+| 403 | LEAD_FORBIDDEN | 表单未发布 |
+
+> 去重逻辑：根据 `dedupKeys` + `dedupWindow` 计算 sha256(formId + ":" + key sorted)，通过唯一键 `uk_form_dedup` 检测重复。`dedup_policy` 支持 `reject`（抛 409）、`mark`（插入但 status=invalid）、`overwrite`（覆盖旧的）、`merge`（合并字段）。
+
+### 3.10 Leads（销售线索管理）
+
+线索中心管理接口（管理端，BFF 注入 X-User-ID/X-User-Role）。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET    | /backend/leads              | RequireUser | 分页列表，query: siteId, status?, formId?, assigneeId?, page?, size? |
+| GET    | /backend/leads/:id           | RequireUser | 单条（query: siteId） |
+| PATCH  | /backend/leads/:id/status    | RequireUser | 状态变更（query: siteId, body: { status, assigneeId? }） |
+| GET    | /backend/leads/export        | RequireUser | CSV 导出（query: siteId） |
+
+**LeadResponse**（查询返回）：
+```json
+{
+  "id": "uuid",
+  "siteId": "uuid",
+  "formId": "uuid",
+  "pageId": "uuid",
+  "channelId": "wechat",
+  "contactMasked": { "phone": "138****8000", "name": "张*" },
+  "utm": { "source": "google" },
+  "status": "new",
+  "assigneeId": "uuid",
+  "sourceIp": "1.2.3.4",
+  "createdAt": "2026-06-15T10:00:00Z",
+  "updatedAt": "2026-06-15T10:00:00Z",
+  "convertedAt": null
+}
+```
+
+**状态机**：`NEW → ASSIGNED → CONTACTING → CONVERTED/LOST`，终态为 `CONVERTED`/`INVALID`/`LOST`。合法转移：
+  - `NEW`: ASSIGNED, INVALID
+  - `ASSIGNED`: CONTACTING, INVALID, LOST
+  - `CONTACTING`: CONVERTED, LOST, INVALID
+  - 终态（CONVERTED/INVALID/LOST）不可转移
+
+**状态变更请求**：
+```json
+{
+  "status": "assigned",
+  "assigneeId": "uuid"
+}
+```
+
+> **敏感字段加密**：phone/email 在入库前使用 AES-256-GCM (128-bit tag) 加密。`contact_json` 为 TEXT 类型（非 JSON），存储 base64(IV(12B) \|\| ciphertext+tag)。导出 CSV 时后端自动解密。List 接口返回脱敏后的 `contactMasked`。
+
 ---
 
 ## 4. 鉴权与权限
@@ -180,6 +356,8 @@ PageSchema 与前端类型兼容，含 `root`（NodeSchema）、可选 `formStat
 - 用户列表：`{ "list": [...], "total": number }`。
 
 本文档随 luban-backend 主后端迭代更新；新增或变更接口时请先更新本文档再实现。
+
+> **Go 后端双实现状态**：luban-backend-go（`packages/backend/luban-backend-go`）当前**尚未实现** §3.8 Forms、§3.9 Leads 公开提交 与 §3.10 Leads 管理的接口。Java 主后端已完整实现上述接口。Go 端仅包含基础的 auth、sites、pages 路由。待后续迭代补齐 lead-capture 能力。参见 `.agents/rules/luban-dual-backend-parity.md`。
 
 ---
 
