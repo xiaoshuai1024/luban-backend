@@ -107,4 +107,18 @@ public class BusinessException extends RuntimeException {
     public static BusinessException leadValidationFailed(String message) {
         return new BusinessException(HttpStatus.BAD_REQUEST, "LEAD_VALIDATION_FAILED", message != null ? message : "留资信息校验失败");
     }
+
+    // ---- Datasource 数据源相关（W1-T2）----
+
+    public static BusinessException datasourceNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "DATASOURCE_NOT_FOUND", "数据源不存在");
+    }
+
+    public static BusinessException datasourceNameConflict() {
+        return new BusinessException(HttpStatus.CONFLICT, "DATASOURCE_NAME_CONFLICT", "数据源名称已存在");
+    }
+
+    public static BusinessException datasourceConnectionFailed(String message) {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "DATASOURCE_CONNECTION_FAILED", message != null ? message : "数据源连接失败");
+    }
 }
