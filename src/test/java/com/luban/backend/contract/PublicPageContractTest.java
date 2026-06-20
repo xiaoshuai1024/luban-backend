@@ -38,6 +38,10 @@ class PublicPageContractTest {
 
     @BeforeEach
     void seed() {
+        // pages + datasources FK → sites; delete children first (datasources is a new
+        // child table added by W1-T2; without this the DELETE FROM sites below violates
+        // fk_datasources_site when DatasourceContractTest ran earlier in the same JVM).
+        jdbc.update("DELETE FROM datasources");
         jdbc.update("DELETE FROM pages");
         jdbc.update("DELETE FROM sites");
         Instant now = Instant.now();

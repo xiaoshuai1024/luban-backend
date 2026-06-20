@@ -27,6 +27,8 @@ public class AuthFilter implements Filter {
     private static final Pattern ADMIN_SITES = Pattern.compile("^/backend/sites(/[^/]+)?$"); // /backend/sites or /backend/sites/:id
     private static final Pattern ADMIN_USERS = Pattern.compile("^/backend/users(/.*)?$");
     private static final Pattern ADMIN_SETTINGS = Pattern.compile("^/backend/settings$");
+    // /backend/datasources, /backend/datasources/:id, /backend/datasources/:id/test — POST/PUT/DELETE require admin (GET is user-readable).
+    private static final Pattern ADMIN_DATASOURCES = Pattern.compile("^/backend/datasources(/[^/]+)?(/test)?$");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -72,6 +74,11 @@ public class AuthFilter implements Filter {
         }
         if (ADMIN_SITES.matcher(path).matches()) {
             return "POST".equals(method) || "PUT".equals(method) || "DELETE".equals(method);
+        }
+        if (ADMIN_DATASOURCES.matcher(path).matches()) {
+            // test is a POST but it's read-only; keep RequireUser for GET and /test.
+            return "POST".equals(method) && !path.endsWith("/test")
+                    || "PUT".equals(method) || "DELETE".equals(method);
         }
         return false;
     }

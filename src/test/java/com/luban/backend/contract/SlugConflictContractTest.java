@@ -35,7 +35,8 @@ class SlugConflictContractTest {
 
     @BeforeEach
     void seed() {
-        // pages FK → sites; delete child first to avoid referential integrity violation.
+        // pages + datasources FK → sites; delete children first to avoid referential integrity violation.
+        jdbc.update("DELETE FROM datasources");
         jdbc.update("DELETE FROM pages");
         jdbc.update("DELETE FROM sites");
         Instant now = Instant.now();
