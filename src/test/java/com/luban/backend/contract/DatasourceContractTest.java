@@ -99,9 +99,11 @@ class DatasourceContractTest {
                         .content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").exists())
+                .andExpect(jsonPath("$.siteId").value(SITE_A))
                 .andExpect(jsonPath("$.type").value("static"))
                 .andExpect(jsonPath("$.config.rows").exists())
-                .andExpect(jsonPath("$.createdAt").exists());
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andExpect(jsonPath("$.updatedAt").exists());
     }
 
     @Test
@@ -192,7 +194,24 @@ class DatasourceContractTest {
                         .header("X-User-Role", "user"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value("ds-x"))
-                .andExpect(jsonPath("$.name").value("single"));
+                .andExpect(jsonPath("$.siteId").value(SITE_A))
+                .andExpect(jsonPath("$.name").value("single"))
+                .andExpect(jsonPath("$.config.url").value("https://example.com"))
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andExpect(jsonPath("$.updatedAt").exists());
+    }
+
+    @Test
+    void getWrongSiteReturns404DatasourceNotFound() throws Exception {
+        // Multi-tenant guard (plan §7 #4): site B cannot read site A's datasource by id.
+        seedDatasource("ds-x", SITE_A, "single", "api", "{\"url\":\"https://example.com\"}");
+        mockMvc.perform(get("/backend/datasources/ds-x")
+                        .param("siteId", SITE_B)
+                        .contextPath("/backend")
+                        .header("X-User-ID", "user-001")
+                        .header("X-User-Role", "user"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("DATASOURCE_NOT_FOUND"));
     }
 
     @Test
@@ -220,7 +239,26 @@ class DatasourceContractTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("renamed"))
                 .andExpect(jsonPath("$.type").value("api"))
-                .andExpect(jsonPath("$.config.url").value("https://x"));
+                .andExpect(jsonPath("$.siteId").value(SITE_A))
+                .andExpect(jsonPath("$.config.url").value("https://x"))
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andExpect(jsonPath("$.updatedAt").exists());
+    }
+
+    @Test
+    void updateWrongSiteReturns404() throws Exception {
+        // Multi-tenant guard: site B cannot update site A's datasource by id.
+        seedDatasource("ds-u", SITE_A, "up", "static", "{}");
+        String body = "{\"siteId\":\"" + SITE_A + "\",\"name\":\"renamed\",\"type\":\"api\",\"config\":{\"url\":\"https://x\"}}";
+        mockMvc.perform(put("/backend/datasources/ds-u")
+                        .param("siteId", SITE_B)
+                        .contextPath("/backend")
+                        .header("X-User-ID", "admin-001")
+                        .header("X-User-Role", "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("DATASOURCE_NOT_FOUND"));
     }
 
     @Test
@@ -261,6 +299,26 @@ class DatasourceContractTest {
                         .header("X-User-ID", "admin-001")
                         .header("X-User-Role", "admin"))
                 .andExpect(status().isNoContent());
+        // Reverse assertion: post-delete GET → 404 (confirms the row is really gone).
+        mockMvc.perform(get("/backend/datasources/ds-del")
+                        .contextPath("/backend")
+                        .header("X-User-ID", "admin-001")
+                        .header("X-User-Role", "admin"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("DATASOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    void deleteWrongSiteReturns404() throws Exception {
+        // Multi-tenant guard: site B cannot delete site A's datasource by id.
+        seedDatasource("ds-del", SITE_A, "to-remove", "static", "{}");
+        mockMvc.perform(delete("/backend/datasources/ds-del")
+                        .param("siteId", SITE_B)
+                        .contextPath("/backend")
+                        .header("X-User-ID", "admin-001")
+                        .header("X-User-Role", "admin"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("DATASOURCE_NOT_FOUND"));
     }
 
     @Test

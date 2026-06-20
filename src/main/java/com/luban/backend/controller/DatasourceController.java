@@ -36,8 +36,9 @@ public class DatasourceController {
     }
 
     @GetMapping("/{id}")
-    public DatasourceResponse get(@PathVariable String id) {
-        return datasourceService.get(id);
+    public DatasourceResponse get(@PathVariable String id,
+                                  @RequestParam(value = "siteId", required = false) String siteId) {
+        return datasourceService.get(id, siteId);
     }
 
     @PostMapping
@@ -52,10 +53,12 @@ public class DatasourceController {
     }
 
     @PutMapping("/{id}")
-    public DatasourceResponse update(@PathVariable String id, @Valid @RequestBody DatasourceSaveRequest req) {
+    public DatasourceResponse update(@PathVariable String id,
+                                     @RequestParam(value = "siteId", required = false) String siteId,
+                                     @Valid @RequestBody DatasourceSaveRequest req) {
         return datasourceService.update(
                 id,
-                req.siteId(),
+                siteId != null ? siteId : req.siteId(),
                 req.name(),
                 req.type(),
                 req.config()
@@ -63,8 +66,9 @@ public class DatasourceController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable String id) {
-        datasourceService.delete(id);
+    public ResponseEntity<Void> delete(@PathVariable String id,
+                                       @RequestParam(value = "siteId", required = false) String siteId) {
+        datasourceService.delete(id, siteId);
         return ResponseEntity.noContent().build();
     }
 
