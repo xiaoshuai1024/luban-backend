@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.dto.CollectionItemResponse;
 import com.luban.backend.dto.CollectionResponse;
-import com.luban.backend.entity.Collection;
-import com.luban.backend.entity.CollectionItem;
+import com.luban.backend.entity.ContentCollection;
+import com.luban.backend.entity.ContentCollectionItem;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.CollectionMapper;
 import com.luban.backend.mapper.SiteMapper;
@@ -42,7 +42,7 @@ public class CollectionService {
     }
 
     public CollectionResponse get(String siteId, String id) {
-        Collection c = collectionMapper.getByIdAndSiteId(id, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(id, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
         return CollectionResponse.fromEntity(c);
     }
@@ -50,7 +50,7 @@ public class CollectionService {
     public CollectionResponse create(String siteId, String name, JsonNode fieldSchema, String status) {
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
         if (status == null || status.isBlank()) status = "active";
-        Collection c = new Collection();
+        ContentCollection c = new ContentCollection();
         c.setId(UUID.randomUUID().toString());
         c.setSiteId(siteId);
         c.setName(name);
@@ -71,7 +71,7 @@ public class CollectionService {
     }
 
     public CollectionResponse update(String siteId, String id, String name, JsonNode fieldSchema, String status) {
-        Collection c = collectionMapper.getByIdAndSiteId(id, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(id, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
         c.setName(name);
         if (fieldSchema != null) c.setFieldSchemaJson(jsonToString(fieldSchema));
@@ -99,25 +99,25 @@ public class CollectionService {
 
     public List<CollectionItemResponse> listItems(String siteId, String collectionId) {
         // 校验 collection 属于该 site
-        Collection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
         return collectionMapper.listItemsByCollectionId(collectionId).stream()
             .map(CollectionItemResponse::fromEntity).collect(Collectors.toList());
     }
 
     public CollectionItemResponse getItem(String siteId, String collectionId, String itemId) {
-        Collection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
-        CollectionItem it = collectionMapper.getItemByIdAndCollectionId(itemId, collectionId);
+        ContentCollectionItem it = collectionMapper.getItemByIdAndCollectionId(itemId, collectionId);
         if (it == null) throw BusinessException.collectionItemNotFound();
         return CollectionItemResponse.fromEntity(it);
     }
 
     public CollectionItemResponse createItem(String siteId, String collectionId, JsonNode data, String status) {
-        Collection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
         if (status == null || status.isBlank()) status = "active";
-        CollectionItem it = new CollectionItem();
+        ContentCollectionItem it = new ContentCollectionItem();
         it.setId(UUID.randomUUID().toString());
         it.setCollectionId(collectionId);
         it.setDataJson(jsonToString(data));
@@ -130,9 +130,9 @@ public class CollectionService {
     }
 
     public CollectionItemResponse updateItem(String siteId, String collectionId, String itemId, JsonNode data, String status) {
-        Collection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
-        CollectionItem it = collectionMapper.getItemByIdAndCollectionId(itemId, collectionId);
+        ContentCollectionItem it = collectionMapper.getItemByIdAndCollectionId(itemId, collectionId);
         if (it == null) throw BusinessException.collectionItemNotFound();
         if (data != null) it.setDataJson(jsonToString(data));
         if (status != null) it.setStatus(status);
@@ -143,7 +143,7 @@ public class CollectionService {
     }
 
     public void deleteItem(String siteId, String collectionId, String itemId) {
-        Collection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, siteId);
         if (c == null) throw BusinessException.collectionNotFound();
         int n = collectionMapper.deleteItemByIdAndCollectionId(itemId, collectionId);
         if (n == 0) throw BusinessException.collectionItemNotFound();

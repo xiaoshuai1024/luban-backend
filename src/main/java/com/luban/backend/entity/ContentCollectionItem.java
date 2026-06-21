@@ -6,7 +6,7 @@ import java.time.Instant;
  * V2-T7 CollectionItem 内容项实体（属于某 Collection）。
  * dataJson 存实际内容数据（按 Collection.fieldSchema 结构）。
  */
-public class CollectionItem {
+public class ContentCollectionItem {
     private String id;
     private String collectionId;
     private String dataJson;

@@ -6,7 +6,7 @@ import java.time.Instant;
  * V2-T7 Collection 内容集合实体。
  * fieldSchemaJson 定义字段结构（JSON），collection_items 表存具体内容项。
  */
-public class Collection {
+public class ContentCollection {
     private String id;
     private String siteId;
     private String name;

@@ -3,7 +3,7 @@ package com.luban.backend.dto;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.luban.backend.entity.Collection;
+import com.luban.backend.entity.ContentCollection;
 
 import java.time.Instant;
 
@@ -21,7 +21,7 @@ public record CollectionResponse(
 ) {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static CollectionResponse fromEntity(Collection c) {
+    public static CollectionResponse fromEntity(ContentCollection c) {
         if (c == null) return null;
         JsonNode schemaNode = null;
         if (c.getFieldSchemaJson() != null && !c.getFieldSchemaJson().isEmpty()) {
