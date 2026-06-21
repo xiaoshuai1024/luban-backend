@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 public class SiteService {
 
     private final SiteMapper siteMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public SiteService(SiteMapper siteMapper) {
         this.siteMapper = siteMapper;
@@ -53,13 +54,17 @@ public class SiteService {
         return SiteResponse.fromEntity(site);
     }
 
-    public SiteResponse update(String id, String name, String slug, String baseUrl, String status) {
+    public SiteResponse update(String id, String name, String slug, String baseUrl, String status,
+                               com.fasterxml.jackson.databind.JsonNode seo, com.fasterxml.jackson.databind.JsonNode analytics) {
         Site site = siteMapper.getById(id);
         if (site == null) throw BusinessException.siteNotFound();
         site.setName(name);
         site.setSlug(slug);
         site.setBaseUrl(baseUrl != null ? baseUrl : "");
         site.setStatus(status);
+        // V2-T2/V2-T10：seo/analytics 为 null 不覆盖（保留旧值）；非 null 才写
+        if (seo != null) site.setSeoJson(jsonToString(seo));
+        if (analytics != null) site.setAnalyticsJson(jsonToString(analytics));
         site.setUpdatedAt(Instant.now());
         try {
             int n = siteMapper.update(site);
@@ -71,6 +76,16 @@ public class SiteService {
             throw e;
         }
         return SiteResponse.fromEntity(site);
+    }
+
+    /** V2-T10: JsonNode → 字符串；null 返回 null（保留旧值语义） */
+    private String jsonToString(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node == null) return null;
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

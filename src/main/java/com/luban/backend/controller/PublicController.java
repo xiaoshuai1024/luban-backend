@@ -1,28 +1,63 @@
 package com.luban.backend.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.dto.PageResponse;
+import com.luban.backend.dto.SiteResponse;
+import com.luban.backend.entity.Site;
+import com.luban.backend.mapper.SiteMapper;
 import com.luban.backend.service.PublicPageService;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 /**
  * 公开接口：供对外站点（如 luban-website）按站点 slug + 路径获取已发布页面，无需鉴权。
  */
 @RestController
-@RequestMapping("/public/sites/{slug}/pages")
+@RequestMapping("/public")
 public class PublicController {
 
     private final PublicPageService publicPageService;
+    private final SiteMapper siteMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PublicController(PublicPageService publicPageService) {
+    public PublicController(PublicPageService publicPageService, SiteMapper siteMapper) {
         this.publicPageService = publicPageService;
+        this.siteMapper = siteMapper;
     }
 
     /**
      * 按路径获取已发布页面（仅 status=published）
      * GET /backend/public/sites/:slug/pages?path=/home
      */
-    @GetMapping(params = "path")
+    @GetMapping(value = "/sites/{slug}/pages", params = "path")
     public PageResponse getByPath(@PathVariable String slug, @RequestParam String path) {
         return publicPageService.getPublishedPageBySlugAndPath(slug, path);
+    }
+
+    /**
+     * V2-T10 公开站点配置：返回站点级 analytics 配置（GA4/百度统计/Facebook Pixel）。
+     * GET /backend/public/sites/:slug/config
+     * website 用此注入第三方分析 SDK 脚本。analytics 为 null 时不输出。
+     */
+    @GetMapping("/sites/{slug}/config")
+    public Map<String, Object> getSiteConfig(@PathVariable String slug) {
+        Site site = siteMapper.getBySlug(slug);
+        if (site == null) {
+            return Map.of("analytics", Map.of());
+        }
+        JsonNode analytics = null;
+        if (site.getAnalyticsJson() != null && !site.getAnalyticsJson().isEmpty()) {
+            try {
+                analytics = objectMapper.readTree(site.getAnalyticsJson());
+            } catch (Exception ignored) {
+            }
+        }
+        return Map.of(
+            "name", site.getName() != null ? site.getName() : "",
+            "baseUrl", site.getBaseUrl() != null ? site.getBaseUrl() : "",
+            "analytics", analytics != null ? analytics : objectMapper.createObjectNode()
+        );
     }
 }
