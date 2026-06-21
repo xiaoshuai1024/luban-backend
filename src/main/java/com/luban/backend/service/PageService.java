@@ -21,10 +21,12 @@ public class PageService {
     private final PageMapper pageMapper;
     private final SiteMapper siteMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final PageVersionService versionService;
 
-    public PageService(PageMapper pageMapper, SiteMapper siteMapper) {
+    public PageService(PageMapper pageMapper, SiteMapper siteMapper, PageVersionService versionService) {
         this.pageMapper = pageMapper;
         this.siteMapper = siteMapper;
+        this.versionService = versionService;
     }
 
     public List<PageResponse> list(String siteId) {
@@ -61,6 +63,8 @@ public class PageService {
             }
             throw e;
         }
+        // V2-T8：新建后生成首版快照（v1）
+        versionService.createSnapshot(page.getId(), schema, "初始版本", null);
         return PageResponse.fromEntity(page);
     }
 
@@ -85,6 +89,8 @@ public class PageService {
             }
             throw e;
         }
+        // V2-T8：保存后生成快照（每次保存一条版本）
+        versionService.createSnapshot(page.getId(), schema, "保存", null);
         return PageResponse.fromEntity(page);
     }
 
