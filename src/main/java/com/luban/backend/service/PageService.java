@@ -38,7 +38,7 @@ public class PageService {
         return PageResponse.fromEntity(p);
     }
 
-    public PageResponse create(String siteId, String name, String path, String status, JsonNode schema) {
+    public PageResponse create(String siteId, String name, String path, String status, JsonNode schema, JsonNode seo) {
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
         if (status == null || status.isBlank()) status = "draft";
         String schemaJson = schemaToJson(schema);
@@ -49,6 +49,7 @@ public class PageService {
         page.setPath(path);
         page.setStatus(status);
         page.setSchemaJson(schemaJson);
+        page.setSeoJson(jsonToString(seo));
         Instant now = Instant.now();
         page.setCreatedAt(now);
         page.setUpdatedAt(now);
@@ -63,13 +64,17 @@ public class PageService {
         return PageResponse.fromEntity(page);
     }
 
-    public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema) {
+    public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema, JsonNode seo) {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
         page.setName(name);
         page.setPath(path);
         page.setStatus(status != null ? status : page.getStatus());
         page.setSchemaJson(schemaToJson(schema));
+        // V2-T2: seo 为 null 表示不传（保留旧值）；空对象/有值才覆盖
+        if (seo != null) {
+            page.setSeoJson(jsonToString(seo));
+        }
         page.setUpdatedAt(Instant.now());
         try {
             int n = pageMapper.update(page);
@@ -94,6 +99,16 @@ public class PageService {
             return objectMapper.writeValueAsString(schema);
         } catch (Exception e) {
             return "{}";
+        }
+    }
+
+    /** V2-T2: SEO JsonNode → 字符串；null 返回 null（保留旧值语义在调用处判定）。 */
+    private String jsonToString(JsonNode node) {
+        if (node == null) return null;
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (Exception e) {
+            return null;
         }
     }
 }

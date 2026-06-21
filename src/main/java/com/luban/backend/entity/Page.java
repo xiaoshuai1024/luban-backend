@@ -4,6 +4,8 @@ import java.time.Instant;
 
 /**
  * Page entity; table pages. schemaJson holds JSON string.
+ *
+ * V2-T2: seoJson 持久化页面级 SEO（PageSchema.seo 结构）。
  */
 public class Page {
     private String id;
@@ -12,6 +14,8 @@ public class Page {
     private String path;
     private String status;
     private String schemaJson;
+    /** V2-T2 页面级 SEO JSON title/description/keywords/og/canonical/noIndex */
+    private String seoJson;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -27,6 +31,8 @@ public class Page {
     public void setStatus(String status) { this.status = status; }
     public String getSchemaJson() { return schemaJson; }
     public void setSchemaJson(String schemaJson) { this.schemaJson = schemaJson; }
+    public String getSeoJson() { return seoJson; }
+    public void setSeoJson(String seoJson) { this.seoJson = seoJson; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
