@@ -214,4 +214,30 @@ class V2FeaturesContractTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.analytics.ga4.measurementId").value("G-TEST123"));
     }
+
+    // === V2-T7 公开 collection items（CMS 绑定渲染）===
+
+    @Test
+    void publicCollectionItems_returnsActiveItems() throws Exception {
+        // 建 collection + 2 个 active item + 1 个 inactive item
+        String createBody = mapper.writeValueAsString(Map.of("name", "公开集合", "fieldSchema", Map.of()));
+        MvcResult cr = mockMvc.perform(req(post("/backend/collections?siteId=" + SITE_ID))
+                .contentType(MediaType.APPLICATION_JSON).content(createBody))
+            .andExpect(status().isCreated()).andReturn();
+        String cid = mapper.readTree(cr.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(req(post("/backend/collections/" + cid + "/items?siteId=" + SITE_ID))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("data", Map.of("title", "文章1")))))
+            .andExpect(status().isCreated());
+        mockMvc.perform(req(post("/backend/collections/" + cid + "/items?siteId=" + SITE_ID))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("data", Map.of("title", "文章2")))))
+            .andExpect(status().isCreated());
+
+        // 公开读：返回 active items
+        mockMvc.perform(get("/backend/public/sites/" + SLUG + "/collections/" + cid + "/items").contextPath("/backend"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].data.title").exists());
+    }
 }

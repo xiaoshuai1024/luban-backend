@@ -157,4 +157,21 @@ public class CollectionService {
             return "{}";
         }
     }
+
+    /**
+     * V2-T7 公开读 collection items（website SSR 用）。
+     * 校验 collection 属于 slug 对应 site 且 status=active；只返回 active items。
+     */
+    public java.util.List<CollectionItemResponse> listPublicItems(String slug, String collectionId) {
+        com.luban.backend.entity.Site site = siteMapper.getBySlug(slug);
+        if (site == null) throw BusinessException.siteNotFound();
+        ContentCollection c = collectionMapper.getByIdAndSiteId(collectionId, site.getId());
+        if (c == null || !"active".equals(c.getStatus())) {
+            throw BusinessException.collectionNotFound();
+        }
+        return collectionMapper.listItemsByCollectionId(collectionId).stream()
+            .filter(it -> "active".equals(it.getStatus()))
+            .map(CollectionItemResponse::fromEntity)
+            .collect(Collectors.toList());
+    }
 }

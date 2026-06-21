@@ -2,13 +2,15 @@ package com.luban.backend.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.backend.dto.CollectionItemResponse;
 import com.luban.backend.dto.PageResponse;
-import com.luban.backend.dto.SiteResponse;
 import com.luban.backend.entity.Site;
 import com.luban.backend.mapper.SiteMapper;
+import com.luban.backend.service.CollectionService;
 import com.luban.backend.service.PublicPageService;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,11 +21,13 @@ import java.util.Map;
 public class PublicController {
 
     private final PublicPageService publicPageService;
+    private final CollectionService collectionService;
     private final SiteMapper siteMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PublicController(PublicPageService publicPageService, SiteMapper siteMapper) {
+    public PublicController(PublicPageService publicPageService, CollectionService collectionService, SiteMapper siteMapper) {
         this.publicPageService = publicPageService;
+        this.collectionService = collectionService;
         this.siteMapper = siteMapper;
     }
 
@@ -59,5 +63,17 @@ public class PublicController {
             "baseUrl", site.getBaseUrl() != null ? site.getBaseUrl() : "",
             "analytics", analytics != null ? analytics : objectMapper.createObjectNode()
         );
+    }
+
+    /**
+     * V2-T7 公开 collection items：website SSR 渲染 CMS 绑定时拉取内容项。
+     * GET /backend/public/sites/:slug/collections/:collectionId/items
+     * 仅返回 active 状态 collection 的 active items（按 updated_at desc）。
+     */
+    @GetMapping("/sites/{slug}/collections/{collectionId}/items")
+    public List<CollectionItemResponse> getPublicCollectionItems(
+            @PathVariable String slug,
+            @PathVariable String collectionId) {
+        return collectionService.listPublicItems(slug, collectionId);
     }
 }
