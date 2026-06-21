@@ -121,4 +121,18 @@ public class BusinessException extends RuntimeException {
     public static BusinessException datasourceConnectionFailed(String message) {
         return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "DATASOURCE_CONNECTION_FAILED", message != null ? message : "数据源连接失败");
     }
+
+    // ---- V2-T7 Collection CMS 内容集合相关 ----
+
+    public static BusinessException collectionNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "COLLECTION_NOT_FOUND", "内容集合不存在");
+    }
+
+    public static BusinessException collectionNameConflict() {
+        return new BusinessException(HttpStatus.CONFLICT, "COLLECTION_NAME_CONFLICT", "内容集合名称已存在");
+    }
+
+    public static BusinessException collectionItemNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "COLLECTION_ITEM_NOT_FOUND", "内容项不存在");
+    }
 }
