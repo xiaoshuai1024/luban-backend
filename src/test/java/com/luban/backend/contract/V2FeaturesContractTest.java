@@ -240,4 +240,19 @@ class V2FeaturesContractTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].data.title").exists());
     }
+
+    // === V2 级联删除测试（修复清理 500）===
+
+    @Test
+    void deleteSite_cascadesChildTables() throws Exception {
+        // 建 collection（FK 引用 site）
+        String collBody = mapper.writeValueAsString(Map.of("name", "级联删除测试集合", "fieldSchema", Map.of()));
+        mockMvc.perform(req(post("/backend/collections?siteId=" + SITE_ID))
+                .contentType(MediaType.APPLICATION_JSON).content(collBody))
+            .andExpect(status().isCreated());
+
+        // 删 site → 应成功（之前 FK RESTRICT 报 500）
+        mockMvc.perform(req(delete("/backend/sites/" + SITE_ID)))
+            .andExpect(status().isNoContent());
+    }
 }

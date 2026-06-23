@@ -31,6 +31,10 @@ public interface CollectionMapper {
     @Delete("DELETE FROM collections WHERE id = #{id} AND site_id = #{siteId}")
     int deleteByIdAndSiteId(@Param("id") String id, @Param("siteId") String siteId);
 
+    /** V2 级联删除：删站点时先清 collections（items 由 FK CASCADE 自动清） */
+    @Delete("DELETE FROM collections WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
+
     // === ContentCollectionItem ===
 
     @Select("SELECT id, collection_id, data_json, status, created_at, updated_at FROM collection_items WHERE collection_id = #{collectionId} ORDER BY updated_at DESC")

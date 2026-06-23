@@ -52,4 +52,8 @@ public interface DatasourceMapper {
     /** Tenant-scoped delete; 0 rows → caller treats as NOT_FOUND. */
     @Delete("DELETE FROM datasources WHERE id = #{id} AND site_id = #{siteId}")
     int deleteByIdAndSiteId(@Param("id") String id, @Param("siteId") String siteId);
+
+    /** V2 级联删除：删站点时先清 datasources */
+    @Delete("DELETE FROM datasources WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
 }

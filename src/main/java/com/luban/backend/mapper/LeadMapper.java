@@ -64,4 +64,8 @@ public interface LeadMapper {
 
     @Select("SELECT " + COLS + " FROM leads WHERE site_id = #{siteId} ORDER BY created_at DESC")
     List<Lead> listAllForExport(@Param("siteId") String siteId);
+
+    /** V2 级联删除：删站点时先清 leads */
+    @Delete("DELETE FROM leads WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
 }

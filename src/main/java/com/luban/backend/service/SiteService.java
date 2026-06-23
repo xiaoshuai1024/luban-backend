@@ -3,6 +3,11 @@ package com.luban.backend.service;
 import com.luban.backend.dto.SiteResponse;
 import com.luban.backend.entity.Site;
 import com.luban.backend.exception.BusinessException;
+import com.luban.backend.mapper.CollectionMapper;
+import com.luban.backend.mapper.DatasourceMapper;
+import com.luban.backend.mapper.FormMapper;
+import com.luban.backend.mapper.LeadMapper;
+import com.luban.backend.mapper.PageMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -17,9 +22,21 @@ public class SiteService {
 
     private final SiteMapper siteMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    // V2 级联删除：删除站点前需先清理子表（FK RESTRICT）
+    private final PageMapper pageMapper;
+    private final FormMapper formMapper;
+    private final LeadMapper leadMapper;
+    private final DatasourceMapper datasourceMapper;
+    private final CollectionMapper collectionMapper;
 
-    public SiteService(SiteMapper siteMapper) {
+    public SiteService(SiteMapper siteMapper, PageMapper pageMapper, FormMapper formMapper,
+                       LeadMapper leadMapper, DatasourceMapper datasourceMapper, CollectionMapper collectionMapper) {
         this.siteMapper = siteMapper;
+        this.pageMapper = pageMapper;
+        this.formMapper = formMapper;
+        this.leadMapper = leadMapper;
+        this.datasourceMapper = datasourceMapper;
+        this.collectionMapper = collectionMapper;
     }
 
     public List<SiteResponse> list() {
@@ -101,7 +118,18 @@ public class SiteService {
         return m.contains("Duplicate") || m.contains("Unique index") || m.contains("primary key violation");
     }
 
+    /**
+     * V2 级联删除：先清理所有子表（leads/forms/datasources/collections/pages），
+     * 再删 site。pages 删除后 page_versions 由 FK CASCADE 自动清。
+     * 解决删除站点时 FK RESTRICT 报 500 的问题。
+     */
     public void delete(String id) {
+        if (siteMapper.getById(id) == null) throw BusinessException.siteNotFound();
+        leadMapper.deleteBySiteId(id);
+        formMapper.deleteBySiteId(id);
+        datasourceMapper.deleteBySiteId(id);
+        collectionMapper.deleteBySiteId(id);
+        pageMapper.deleteBySiteId(id);
         int n = siteMapper.deleteById(id);
         if (n == 0) throw BusinessException.siteNotFound();
     }

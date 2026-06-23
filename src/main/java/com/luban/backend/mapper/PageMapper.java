@@ -29,4 +29,8 @@ public interface PageMapper {
 
     @Delete("DELETE FROM pages WHERE id = #{pageId} AND site_id = #{siteId}")
     int deleteByIdAndSiteId(@Param("pageId") String pageId, @Param("siteId") String siteId);
+
+    /** V2 级联删除：删站点时先清 pages（page_versions 由 FK CASCADE 自动清） */
+    @Delete("DELETE FROM pages WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
 }
