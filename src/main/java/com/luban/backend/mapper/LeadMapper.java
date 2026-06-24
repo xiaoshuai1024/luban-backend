@@ -101,4 +101,8 @@ public interface LeadMapper {
     int updateContact(@Param("id") String id, @Param("siteId") String siteId,
                       @Param("contactJson") String contactJson, @Param("utmJson") String utmJson,
                       @Param("updatedAt") java.time.Instant updatedAt);
+
+    /** V2 级联删除：删站点时先清 leads */
+    @Delete("DELETE FROM leads WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
 }

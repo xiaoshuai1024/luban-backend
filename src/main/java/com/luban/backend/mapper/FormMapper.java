@@ -37,4 +37,8 @@ public interface FormMapper {
             + "dedup_window = #{dedupWindow}, dedup_policy = #{dedupPolicy}, anti_spam_json = #{antiSpamJson}, "
             + "status = #{status}, updated_at = #{updatedAt} WHERE id = #{id} AND site_id = #{siteId}")
     int update(Form form);
+
+    /** V2 级联删除：删站点时先清 forms */
+    @Delete("DELETE FROM forms WHERE site_id = #{siteId}")
+    int deleteBySiteId(@Param("siteId") String siteId);
 }

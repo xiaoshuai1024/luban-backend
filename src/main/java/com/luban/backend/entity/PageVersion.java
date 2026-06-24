@@ -3,30 +3,30 @@ package com.luban.backend.entity;
 import java.time.Instant;
 
 /**
- * PageVersion entity; table page_versions. schemaJson holds 发布时刻的页面 schema 快照。
- * 每次 published 状态变更 → 自增 version，快照 schema_json（plan §3.4）。
+ * V2-T8 PageVersion 版本快照实体。
+ * schemaJson 存保存时刻的 PageSchema 快照；version_no 自增。
  */
 public class PageVersion {
     private String id;
-    private String siteId;
     private String pageId;
-    private int version;
+    private int versionNo;
     private String schemaJson;
-    private String operatorId;
+    private String summary;
+    private String createdBy;
     private Instant createdAt;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
-    public String getSiteId() { return siteId; }
-    public void setSiteId(String siteId) { this.siteId = siteId; }
     public String getPageId() { return pageId; }
     public void setPageId(String pageId) { this.pageId = pageId; }
-    public int getVersion() { return version; }
-    public void setVersion(int version) { this.version = version; }
+    public int getVersionNo() { return versionNo; }
+    public void setVersionNo(int versionNo) { this.versionNo = versionNo; }
     public String getSchemaJson() { return schemaJson; }
     public void setSchemaJson(String schemaJson) { this.schemaJson = schemaJson; }
-    public String getOperatorId() { return operatorId; }
-    public void setOperatorId(String operatorId) { this.operatorId = operatorId; }
+    public String getSummary() { return summary; }
+    public void setSummary(String summary) { this.summary = summary; }
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }

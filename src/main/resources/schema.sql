@@ -1,3 +1,7 @@
+-- DEPRECATED: kept only as historical reference. Schema management is now handled
+-- by Flyway migrations under src/main/resources/db/migration/. Do not edit this
+-- file for schema changes — add a new V<timestamp>__*.sql migration instead.
+--
 -- Idempotent schema (aligned with luban-backend-go dao/mysql.go)
 CREATE TABLE IF NOT EXISTS sites (
     id         VARCHAR(36)  PRIMARY KEY,

@@ -21,13 +21,13 @@ public class PageService {
 
     private final PageMapper pageMapper;
     private final SiteMapper siteMapper;
-    private final PageVersionService pageVersionService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final PageVersionService versionService;
 
-    public PageService(PageMapper pageMapper, SiteMapper siteMapper, PageVersionService pageVersionService) {
+    public PageService(PageMapper pageMapper, SiteMapper siteMapper, PageVersionService versionService) {
         this.pageMapper = pageMapper;
         this.siteMapper = siteMapper;
-        this.pageVersionService = pageVersionService;
+        this.versionService = versionService;
     }
 
     public List<PageResponse> list(String siteId) {
@@ -42,7 +42,7 @@ public class PageService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public PageResponse create(String siteId, String name, String path, String status, JsonNode schema) {
+    public PageResponse create(String siteId, String name, String path, String status, JsonNode schema, JsonNode seo) {
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
         if (status == null || status.isBlank()) status = "draft";
         String schemaJson = schemaToJson(schema);
@@ -53,6 +53,7 @@ public class PageService {
         page.setPath(path);
         page.setStatus(status);
         page.setSchemaJson(schemaJson);
+        page.setSeoJson(jsonToString(seo));
         Instant now = Instant.now();
         page.setCreatedAt(now);
         page.setUpdatedAt(now);
@@ -64,22 +65,23 @@ public class PageService {
             }
             throw e;
         }
-        // 发布即建版本（plan §3.4）
-        if ("published".equals(status)) {
-            pageVersionService.createVersion(siteId, page.getId(), schemaJson, null);
-        }
+        // V2-T8：新建后生成首版快照（v1）
+        versionService.createSnapshot(page.getId(), schema, "初始版本", null);
         return PageResponse.fromEntity(page);
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema) {
+    public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema, JsonNode seo) {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
-        String previousStatus = page.getStatus();
         page.setName(name);
         page.setPath(path);
         page.setStatus(status != null ? status : page.getStatus());
         page.setSchemaJson(schemaToJson(schema));
+        // V2-T2: seo 为 null 表示不传（保留旧值）；空对象/有值才覆盖
+        if (seo != null) {
+            page.setSeoJson(jsonToString(seo));
+        }
         page.setUpdatedAt(Instant.now());
         try {
             int n = pageMapper.update(page);
@@ -90,10 +92,8 @@ public class PageService {
             }
             throw e;
         }
-        // 发布即建版本：仅在状态从未发布→发布时建版本（避免重复发布刷版本号）
-        if ("published".equals(page.getStatus()) && !"published".equals(previousStatus)) {
-            pageVersionService.createVersion(siteId, pageId, page.getSchemaJson(), null);
-        }
+        // V2-T8：保存后生成快照（每次保存一条版本）
+        versionService.createSnapshot(page.getId(), schema, "保存", null);
         return PageResponse.fromEntity(page);
     }
 
@@ -108,6 +108,16 @@ public class PageService {
             return objectMapper.writeValueAsString(schema);
         } catch (Exception e) {
             return "{}";
+        }
+    }
+
+    /** V2-T2: SEO JsonNode → 字符串；null 返回 null（保留旧值语义在调用处判定）。 */
+    private String jsonToString(JsonNode node) {
+        if (node == null) return null;
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (Exception e) {
+            return null;
         }
     }
 }

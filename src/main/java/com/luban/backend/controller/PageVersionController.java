@@ -2,50 +2,54 @@ package com.luban.backend.controller;
 
 import com.luban.backend.dto.PageVersionResponse;
 import com.luban.backend.service.PageVersionService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
- * 页面版本控制器（plan §3.4 / §9.2）：
- * <ul>
- *   <li>GET  /sites/{siteId}/pages/{pageId}/versions — 版本列表</li>
- *   <li>GET  /sites/{siteId}/pages/{pageId}/versions/{version} — 版本详情</li>
- *   <li>POST /sites/{siteId}/pages/{pageId}/versions/{version}/rollback — 回滚</li>
- * </ul>
- * 多租户隔离：按 siteId + pageId 过滤。鉴权由 AuthFilter + BFF 注入 X-User-ID 保证。
+ * V2-T8 版本历史控制器。
+ *
+ * 路由（嵌套在 /sites/{siteId}/pages/{pageId}/versions 下）：
+ *   GET  /versions               → list（不含 schema）
+ *   GET  /versions/{versionId}   → get（含 schema）
+ *   POST /versions/{versionId}/rollback → 回滚（admin-only）
+ *
+ * 回滚语义：读 versionId schema 覆盖 page → 新建一条 version → 返回新版本。
  */
 @RestController
 @RequestMapping("/sites/{siteId}/pages/{pageId}/versions")
 public class PageVersionController {
 
-    private final PageVersionService pageVersionService;
+    private final PageVersionService versionService;
 
-    public PageVersionController(PageVersionService pageVersionService) {
-        this.pageVersionService = pageVersionService;
+    public PageVersionController(PageVersionService versionService) {
+        this.versionService = versionService;
     }
 
     @GetMapping
-    public List<PageVersionResponse> list(@PathVariable String siteId, @PathVariable String pageId) {
-        return pageVersionService.list(siteId, pageId);
+    public List<PageVersionResponse> list(
+            @PathVariable("siteId") String siteId,
+            @PathVariable("pageId") String pageId) {
+        return versionService.list(siteId, pageId);
     }
 
-    @GetMapping("/{version}")
-    public PageVersionResponse get(@PathVariable String siteId,
-                                   @PathVariable String pageId,
-                                   @PathVariable int version) {
-        return pageVersionService.get(siteId, pageId, version);
+    @GetMapping("/{versionId}")
+    public PageVersionResponse get(
+            @PathVariable("siteId") String siteId,
+            @PathVariable("pageId") String pageId,
+            @PathVariable String versionId) {
+        return versionService.get(siteId, pageId, versionId);
     }
 
-    @PostMapping("/{version}/rollback")
+    @PostMapping("/{versionId}/rollback")
     public ResponseEntity<PageVersionResponse> rollback(
-            @PathVariable String siteId,
-            @PathVariable String pageId,
-            @PathVariable int version,
-            @RequestHeader(value = "X-User-ID", required = false) String operatorId) {
-        PageVersionResponse rolled = pageVersionService.rollback(siteId, pageId, version, operatorId);
-        return ResponseEntity.ok(rolled);
+            @PathVariable("siteId") String siteId,
+            @PathVariable("pageId") String pageId,
+            @PathVariable String versionId,
+            @RequestHeader(value = "X-User-ID", required = false) String userId) {
+        PageVersionResponse rolled = versionService.rollback(siteId, pageId, versionId, userId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(rolled);
     }
 }

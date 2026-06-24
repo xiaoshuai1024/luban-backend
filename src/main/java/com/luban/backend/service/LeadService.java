@@ -285,15 +285,13 @@ public class LeadService {
             leads = leadMapper.listAllForExport(siteId);
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("id,phone,email,name,status,assignee,created_at\n");
+        sb.append("phone,email,name,status,created_at\n");
         for (Lead l : leads) {
             Map<String, String> contact = decryptContact(l);
-            sb.append(csv(l.getId())).append(',')
-                    .append(csv(contact.get("phone"))).append(',')
+            sb.append(csv(contact.get("phone"))).append(',')
                     .append(csv(contact.get("email"))).append(',')
                     .append(csv(contact.get("name"))).append(',')
                     .append(csv(l.getStatus())).append(',')
-                    .append(csv(l.getAssigneeId())).append(',')
                     .append(csv(l.getCreatedAt() != null ? l.getCreatedAt().toString() : "")).append('\n');
         }
         return sb.toString();

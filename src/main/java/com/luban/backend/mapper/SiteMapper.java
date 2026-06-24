@@ -8,20 +8,20 @@ import java.util.List;
 @Mapper
 public interface SiteMapper {
 
-    @Select("SELECT id, name, slug, base_url, status, created_at, updated_at FROM sites ORDER BY created_at DESC")
+    @Select("SELECT id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at FROM sites ORDER BY created_at DESC")
     List<Site> list();
 
-    @Select("SELECT id, name, slug, base_url, status, created_at, updated_at FROM sites WHERE id = #{id}")
+    @Select("SELECT id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at FROM sites WHERE id = #{id}")
     Site getById(String id);
 
-    @Select("SELECT id, name, slug, base_url, status, created_at, updated_at FROM sites WHERE slug = #{slug}")
+    @Select("SELECT id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at FROM sites WHERE slug = #{slug}")
     Site getBySlug(String slug);
 
-    @Insert("INSERT INTO sites (id, name, slug, base_url, status, created_at, updated_at) " +
-           "VALUES (#{id}, #{name}, #{slug}, #{baseUrl}, #{status}, #{createdAt}, #{updatedAt})")
+    @Insert("INSERT INTO sites (id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at) " +
+           "VALUES (#{id}, #{name}, #{slug}, #{baseUrl}, #{status}, #{seoJson}, #{analyticsJson}, #{createdAt}, #{updatedAt})")
     int insert(Site site);
 
-    @Update("UPDATE sites SET name=#{name}, slug=#{slug}, base_url=#{baseUrl}, status=#{status}, updated_at=#{updatedAt} WHERE id=#{id}")
+    @Update("UPDATE sites SET name=#{name}, slug=#{slug}, base_url=#{baseUrl}, status=#{status}, seo_json=#{seoJson}, analytics_json=#{analyticsJson}, updated_at=#{updatedAt} WHERE id=#{id}")
     int update(Site site);
 
     @Delete("DELETE FROM sites WHERE id = #{id}")

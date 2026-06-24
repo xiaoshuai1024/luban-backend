@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -31,6 +32,23 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .map(e -> e.getField() + ": " + e.getDefaultMessage())
                 .orElse("请求参数非法");
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new APIError("INVALID_ARGUMENT", msg));
+    }
+
+    /**
+    /**
+     * Malformed / unreadable JSON body (e.g. truncated payload, invalid JSON syntax).
+     * Aligned with the Go backend's {@code ShouldBindJSON} failure path → 400
+     * INVALID_ARGUMENT (plan §9.2). Without this handler Spring would fall through to
+     * {@link #handleOther} and return 500 INTERNAL, breaking dual-backend parity.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<APIError> handleUnreadable(HttpMessageNotReadableException ex) {
+        String msg = ex.getMessage() != null && ex.getMessage().contains("required")
+                ? "request body is required"
+                : "malformed JSON body";
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(new APIError("INVALID_ARGUMENT", msg));

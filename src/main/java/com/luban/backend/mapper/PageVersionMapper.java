@@ -6,26 +6,25 @@ import org.apache.ibatis.annotations.*;
 import java.util.List;
 
 /**
- * PageVersion Mapper（MyBatis 注解）：版本列表 / 详情 / 自增插入 / 当前最大版本号。
+ * V2-T8 PageVersion Mapper。
+ * 列名显式列出。list 不含 schema_json（列表轻量），get 含。
  */
 @Mapper
 public interface PageVersionMapper {
 
-    String COLS = "id, site_id, page_id, version, schema_json, operator_id, created_at";
+    @Select("SELECT id, page_id, version_no, summary, created_by, created_at FROM page_versions WHERE page_id = #{pageId} ORDER BY version_no DESC")
+    List<PageVersion> listByPageId(String pageId);
 
-    /** 指定页面的版本列表（按版本号倒序）。 */
-    @Select("SELECT " + COLS + " FROM page_versions WHERE page_id = #{pageId} AND site_id = #{siteId} ORDER BY version DESC")
-    List<PageVersion> listByPageId(@Param("siteId") String siteId, @Param("pageId") String pageId);
+    @Select("SELECT id, page_id, version_no, schema_json, summary, created_by, created_at FROM page_versions WHERE id = #{versionId} AND page_id = #{pageId}")
+    PageVersion getByIdAndPageId(@Param("versionId") String versionId, @Param("pageId") String pageId);
 
-    /** 指定版本的详情。 */
-    @Select("SELECT " + COLS + " FROM page_versions WHERE page_id = #{pageId} AND site_id = #{siteId} AND version = #{version}")
-    PageVersion getByPageIdAndVersion(@Param("siteId") String siteId, @Param("pageId") String pageId, @Param("version") int version);
+    @Select("SELECT COALESCE(MAX(version_no), 0) FROM page_versions WHERE page_id = #{pageId}")
+    int maxVersionNo(String pageId);
 
-    /** 当前页面最大版本号（无版本返回 0）。 */
-    @Select("SELECT COALESCE(MAX(version), 0) FROM page_versions WHERE page_id = #{pageId} AND site_id = #{siteId}")
-    int maxVersion(@Param("siteId") String siteId, @Param("pageId") String pageId);
+    @Insert("INSERT INTO page_versions (id, page_id, version_no, schema_json, summary, created_by, created_at) " +
+            "VALUES (#{id}, #{pageId}, #{versionNo}, #{schemaJson}, #{summary}, #{createdBy}, #{createdAt})")
+    int insert(PageVersion version);
 
-    @Insert("INSERT INTO page_versions (id, site_id, page_id, version, schema_json, operator_id, created_at) "
-            + "VALUES (#{id}, #{siteId}, #{pageId}, #{version}, #{schemaJson}, #{operatorId}, #{createdAt})")
-    int insert(PageVersion pageVersion);
+    @Delete("DELETE FROM page_versions WHERE page_id = #{pageId} AND version_no < #{keepFromVersion}")
+    int deleteOlderThan(@Param("pageId") String pageId, @Param("keepFromVersion") int keepFromVersion);
 }

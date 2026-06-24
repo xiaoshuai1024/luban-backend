@@ -1,5 +1,7 @@
 package com.luban.backend.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.dto.PageVersionResponse;
 import com.luban.backend.entity.Page;
 import com.luban.backend.entity.PageVersion;
@@ -7,7 +9,6 @@ import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.PageMapper;
 import com.luban.backend.mapper.PageVersionMapper;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -15,82 +16,104 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * 页面版本领域服务（plan §3.4）：
- * <ul>
- *   <li>发布即建版本：每次 published 状态变更 → 自增 version，快照 schema_json</li>
- *   <li>回滚 = 复制目标版本 schema 为当前页面 + 建新版本（不改历史）</li>
- *   <li>版本号单调递增，不复用</li>
- * </ul>
+ * V2-T8 版本历史服务。
+ *
+ * 快照触发：PageService.save 时调用 createSnapshot（每次保存生成一条）。
+ * 回滚语义（plan §9.2）：读 versionId 的 schema → 覆盖 page.schema_json
+ *   → 新建一条 version（versionNo 自增）→ 返回新版本（复制语义非指针）。
+ * 保留策略：每页最近 50 版，超出的旧版本清理。
  */
 @Service
 public class PageVersionService {
 
-    private final PageVersionMapper pageVersionMapper;
+    private final PageVersionMapper versionMapper;
     private final PageMapper pageMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final int KEEP_RECENT = 50;
 
-    public PageVersionService(PageVersionMapper pageVersionMapper, PageMapper pageMapper) {
-        this.pageVersionMapper = pageVersionMapper;
+    public PageVersionService(PageVersionMapper versionMapper, PageMapper pageMapper) {
+        this.versionMapper = versionMapper;
         this.pageMapper = pageMapper;
     }
 
-    /** 版本列表（按版本号倒序）。 */
+    /** 列出版本（不含 schema，轻量列表） */
     public List<PageVersionResponse> list(String siteId, String pageId) {
-        ensurePageExists(siteId, pageId);
-        return pageVersionMapper.listByPageId(siteId, pageId).stream()
-                .map(PageVersionResponse::fromEntity)
-                .collect(Collectors.toList());
+        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        if (page == null) throw BusinessException.pageNotFound();
+        return versionMapper.listByPageId(pageId).stream()
+            .map(v -> PageVersionResponse.fromEntity(v, false))
+            .collect(Collectors.toList());
     }
 
-    /** 版本详情。 */
-    public PageVersionResponse get(String siteId, String pageId, int version) {
-        ensurePageExists(siteId, pageId);
-        PageVersion v = pageVersionMapper.getByPageIdAndVersion(siteId, pageId, version);
-        if (v == null) throw BusinessException.pageVersionNotFound();
-        return PageVersionResponse.fromEntity(v);
+    /** 取单版本（含 schema，详情/回滚前预览用） */
+    public PageVersionResponse get(String siteId, String pageId, String versionId) {
+        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        if (page == null) throw BusinessException.pageNotFound();
+        PageVersion v = versionMapper.getByIdAndPageId(versionId, pageId);
+        if (v == null) throw new BusinessException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "版本不存在");
+        return PageVersionResponse.fromEntity(v, true);
     }
 
     /**
-     * 回滚到指定版本：复制目标版本 schema 为当前页面 schema + 建新版本（不改历史，plan §3.4）。
-     *
-     * @return 新建的版本号
+     * 回滚：读 versionId schema → 覆盖 page.schema_json → 新建一条 version（versionNo 自增）。
+     * 返回新版本（复制语义）。回滚动作本身也产生一条历史记录。
      */
-    @Transactional(rollbackFor = Exception.class)
-    public PageVersionResponse rollback(String siteId, String pageId, int targetVersion, String operatorId) {
-        Page page = ensurePageExists(siteId, pageId);
-        PageVersion target = pageVersionMapper.getByPageIdAndVersion(siteId, pageId, targetVersion);
-        if (target == null) throw BusinessException.pageVersionNotFound();
+    public PageVersionResponse rollback(String siteId, String pageId, String versionId, String createdBy) {
+        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        if (page == null) throw BusinessException.pageNotFound();
+        PageVersion target = versionMapper.getByIdAndPageId(versionId, pageId);
+        if (target == null) throw new BusinessException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "版本不存在");
 
-        // 1. 把目标版本的 schema 写回当前页面
+        // 覆盖 page.schema_json 为目标版本的 schema
         page.setSchemaJson(target.getSchemaJson());
         page.setUpdatedAt(Instant.now());
         pageMapper.update(page);
 
-        // 2. 以回滚后的 schema 建一个新版本（不改历史，版本号单调递增）
-        return createVersion(siteId, pageId, target.getSchemaJson(), operatorId);
+        // 新建一条 version（复制语义，versionNo 自增）
+        PageVersion snapshot = buildSnapshot(pageId, target.getSchemaJson(),
+            "回滚到 v" + target.getVersionNo(), createdBy);
+        versionMapper.insert(snapshot);
+        pruneOldVersions(pageId);
+        return PageVersionResponse.fromEntity(snapshot, true);
     }
 
     /**
-     * 发布时建版本快照（供 PageService 在 published 状态变更时调用）。
-     * 幂等：同一 schema 重复发布会再建一个新版本号（版本号单调递增，不复用）。
+     * 保存时创建快照（由 PageService 调用）。
      */
-    @Transactional(rollbackFor = Exception.class)
-    public PageVersionResponse createVersion(String siteId, String pageId, String schemaJson, String operatorId) {
-        int nextVersion = pageVersionMapper.maxVersion(siteId, pageId) + 1;
-        PageVersion v = new PageVersion();
-        v.setId(UUID.randomUUID().toString());
-        v.setSiteId(siteId);
-        v.setPageId(pageId);
-        v.setVersion(nextVersion);
-        v.setSchemaJson(schemaJson);
-        v.setOperatorId(operatorId);
-        v.setCreatedAt(Instant.now());
-        pageVersionMapper.insert(v);
-        return PageVersionResponse.fromEntity(v);
+    public PageVersionResponse createSnapshot(String pageId, JsonNode schema, String summary, String createdBy) {
+        String schemaJson;
+        try {
+            schemaJson = schema != null ? objectMapper.writeValueAsString(schema) : "{}";
+        } catch (Exception e) {
+            schemaJson = "{}";
+        }
+        PageVersion snapshot = buildSnapshot(pageId, schemaJson, summary, createdBy);
+        versionMapper.insert(snapshot);
+        pruneOldVersions(pageId);
+        return PageVersionResponse.fromEntity(snapshot, false);
     }
 
-    private Page ensurePageExists(String siteId, String pageId) {
-        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
-        if (page == null) throw BusinessException.pageNotFound();
-        return page;
+    private PageVersion buildSnapshot(String pageId, String schemaJson, String summary, String createdBy) {
+        PageVersion v = new PageVersion();
+        v.setId(UUID.randomUUID().toString());
+        v.setPageId(pageId);
+        int nextNo = versionMapper.maxVersionNo(pageId) + 1;
+        v.setVersionNo(nextNo);
+        v.setSchemaJson(schemaJson);
+        v.setSummary(summary);
+        v.setCreatedBy(createdBy);
+        v.setCreatedAt(Instant.now());
+        return v;
+    }
+
+    /** 保留最近 KEEP_RECENT 版，清理更旧的 */
+    private void pruneOldVersions(String pageId) {
+        int maxNo = versionMapper.maxVersionNo(pageId);
+        int keepFromVersion = maxNo - KEEP_RECENT + 1;
+        if (keepFromVersion > 1) {
+            versionMapper.deleteOlderThan(pageId, keepFromVersion);
+        }
     }
 }

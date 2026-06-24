@@ -1,5 +1,6 @@
 package com.luban.backend.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,23 +9,25 @@ import com.luban.backend.entity.PageVersion;
 import java.time.Instant;
 
 /**
- * 页面版本响应（schema 为解析后的 JSON 节点，便于前端直接渲染）。
+ * V2-T8 版本响应。includeSchema=false 时省略 schemaJson（列表用），
+ * true 时含 schema（详情/回滚用）。
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record PageVersionResponse(
     String id,
-    String siteId,
     String pageId,
-    int version,
+    int versionNo,
     JsonNode schema,
-    String operatorId,
+    String summary,
+    String createdBy,
     @JsonFormat(shape = JsonFormat.Shape.STRING) Instant createdAt
 ) {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static PageVersionResponse fromEntity(PageVersion v) {
+    public static PageVersionResponse fromEntity(PageVersion v, boolean includeSchema) {
         if (v == null) return null;
         JsonNode schemaNode = null;
-        if (v.getSchemaJson() != null && !v.getSchemaJson().isEmpty()) {
+        if (includeSchema && v.getSchemaJson() != null && !v.getSchemaJson().isEmpty()) {
             try {
                 schemaNode = MAPPER.readTree(v.getSchemaJson());
             } catch (Exception ignored) {
@@ -33,11 +36,11 @@ public record PageVersionResponse(
         }
         return new PageVersionResponse(
             v.getId(),
-            v.getSiteId(),
             v.getPageId(),
-            v.getVersion(),
+            v.getVersionNo(),
             schemaNode,
-            v.getOperatorId(),
+            v.getSummary(),
+            v.getCreatedBy(),
             v.getCreatedAt()
         );
     }
