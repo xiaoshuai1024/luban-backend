@@ -12,6 +12,7 @@ import com.luban.backend.mapper.FormMapper;
 import com.luban.backend.mapper.LeadAuditLogMapper;
 import com.luban.backend.mapper.LeadMapper;
 import com.luban.backend.mapper.SiteMapper;
+import com.luban.backend.mapper.UserSiteMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,13 +44,16 @@ public class LeadService {
     private final LeadCryptoService cryptoService;
     private final LeadStatusMachine statusMachine;
     private final LeadNotifyService notifyService;
+    private final QuotaService quotaService;
+    private final UserSiteMapper userSiteMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
                        LeadAuditLogMapper leadAuditMapper, TenantGuardService tenantGuard,
                        DedupService dedupService, AntiSpamService antiSpamService,
                        LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
-                       LeadNotifyService notifyService) {
+                       LeadNotifyService notifyService, QuotaService quotaService,
+                       UserSiteMapper userSiteMapper) {
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
         this.siteMapper = siteMapper;
@@ -60,6 +64,8 @@ public class LeadService {
         this.cryptoService = cryptoService;
         this.statusMachine = statusMachine;
         this.notifyService = notifyService;
+        this.quotaService = quotaService;
+        this.userSiteMapper = userSiteMapper;
     }
 
     /**
@@ -149,6 +155,13 @@ public class LeadService {
 
         // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚 lead）
         registerAfterCommitNotify(lead.getId(), form);
+
+        // v02 T-be-4：留资用量计数（站点 owner 配额）。超限由 QuotaService 抛 429。
+        // 注意：在 insert 之后调用，超限会回滚整个事务（@Transactional）。
+        String ownerUserId = userSiteMapper.findOwnerUserId(form.getSiteId());
+        if (ownerUserId != null) {
+            quotaService.checkAndIncrement(ownerUserId, "leads");
+        }
 
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
     }
