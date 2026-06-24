@@ -43,7 +43,7 @@ public class SiteController {
 
     @PutMapping("/{id}")
     public SiteResponse update(@PathVariable String id, @Valid @RequestBody SiteCreateRequest req) {
-        return siteService.update(id, req.name(), req.slug(), req.baseUrl(), req.status());
+        return siteService.update(id, req.name(), req.slug(), req.baseUrl(), req.status(), req.seo(), req.analytics());
     }
 
     @DeleteMapping("/{id}")

@@ -27,6 +27,10 @@ public class AuthFilter implements Filter {
     private static final Pattern ADMIN_SITES = Pattern.compile("^/backend/sites(/[^/]+)?$"); // /backend/sites or /backend/sites/:id
     private static final Pattern ADMIN_USERS = Pattern.compile("^/backend/users(/.*)?$");
     private static final Pattern ADMIN_SETTINGS = Pattern.compile("^/backend/settings$");
+    /** T-be-8 收窄：仅公开提交端点免鉴权（POST /backend/lead/forms/:id/submit）。 */
+    private static final Pattern PUBLIC_LEAD_SUBMIT = Pattern.compile("^/backend/lead/forms/[^/]+/submit$");
+    // /backend/datasources, /backend/datasources/:id, /backend/datasources/:id/test — POST/PUT/DELETE require admin (GET is user-readable).
+    private static final Pattern ADMIN_DATASOURCES = Pattern.compile("^/backend/datasources(/[^/]+)?(/test)?$");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -45,7 +49,9 @@ public class AuthFilter implements Filter {
             if (role != null) role = role.trim();
             UserContext.set(userId != null ? userId : "", role != null ? role : "");
 
-            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/")) {
+            // 公开端点：ping / login / public/* / lead submit（收窄为仅 submit POST）
+            if (NO_AUTH_PATHS.contains(path) || path.startsWith("/backend/public/")
+                    || (PUBLIC_LEAD_SUBMIT.matcher(path).matches() && "POST".equals(method))) {
                 chain.doFilter(request, response);
                 return;
             }
@@ -72,6 +78,11 @@ public class AuthFilter implements Filter {
         }
         if (ADMIN_SITES.matcher(path).matches()) {
             return "POST".equals(method) || "PUT".equals(method) || "DELETE".equals(method);
+        }
+        if (ADMIN_DATASOURCES.matcher(path).matches()) {
+            // test is a POST but it's read-only; keep RequireUser for GET and /test.
+            return "POST".equals(method) && !path.endsWith("/test")
+                    || "PUT".equals(method) || "DELETE".equals(method);
         }
         return false;
     }

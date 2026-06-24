@@ -73,4 +73,78 @@ public class BusinessException extends RuntimeException {
     public static BusinessException invalidArgument(String message) {
         return new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", message != null ? message : "请求参数非法");
     }
+
+    // ---- Lead / Form 留资相关（P0）----
+
+    public static BusinessException leadNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "LEAD_NOT_FOUND", "线索不存在");
+    }
+
+    public static BusinessException formNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "FORM_NOT_FOUND", "表单不存在");
+    }
+
+    public static BusinessException leadDuplicate() {
+        return new BusinessException(HttpStatus.CONFLICT, "LEAD_DUPLICATE", "重复留资");
+    }
+
+    public static BusinessException leadSpamBlocked() {
+        return new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "LEAD_SPAM_BLOCKED", "操作过于频繁，请稍后再试");
+    }
+
+    public static BusinessException leadDisabled() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "LEAD_DISABLED", "留资功能暂未开放");
+    }
+
+    public static BusinessException leadForbidden() {
+        return new BusinessException(HttpStatus.FORBIDDEN, "LEAD_FORBIDDEN", "无权操作此线索");
+    }
+
+    public static BusinessException captchaInvalid() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "LEAD_CAPTCHA_INVALID", "验证码错误");
+    }
+
+    public static BusinessException leadValidationFailed(String message) {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "LEAD_VALIDATION_FAILED", message != null ? message : "留资信息校验失败");
+    }
+
+    // ---- 页面版本（plan §3.4）----
+
+    public static BusinessException pageVersionNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "页面版本不存在");
+    }
+
+    // ---- FeatureGate（plan §3.5）----
+
+    public static BusinessException featureGateNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "FEATURE_GATE_NOT_FOUND", "特性开关不存在");
+    }
+
+    // ---- Datasource 数据源相关（W1-T2）----
+
+    public static BusinessException datasourceNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "DATASOURCE_NOT_FOUND", "数据源不存在");
+    }
+
+    public static BusinessException datasourceNameConflict() {
+        return new BusinessException(HttpStatus.CONFLICT, "DATASOURCE_NAME_CONFLICT", "数据源名称已存在");
+    }
+
+    public static BusinessException datasourceConnectionFailed(String message) {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "DATASOURCE_CONNECTION_FAILED", message != null ? message : "数据源连接失败");
+    }
+
+    // ---- V2-T7 Collection CMS 内容集合相关 ----
+
+    public static BusinessException collectionNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "COLLECTION_NOT_FOUND", "内容集合不存在");
+    }
+
+    public static BusinessException collectionNameConflict() {
+        return new BusinessException(HttpStatus.CONFLICT, "COLLECTION_NAME_CONFLICT", "内容集合名称已存在");
+    }
+
+    public static BusinessException collectionItemNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "COLLECTION_ITEM_NOT_FOUND", "内容项不存在");
+    }
 }

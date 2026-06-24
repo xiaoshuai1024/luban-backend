@@ -39,7 +39,8 @@ public class PageController {
             req.name(),
             req.path(),
             req.status(),
-            req.schema()
+            req.schema(),
+            req.seo()
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
@@ -55,7 +56,8 @@ public class PageController {
             req.name(),
             req.path(),
             req.status(),
-            req.schema()
+            req.schema(),
+            req.seo()
         );
     }
 
