@@ -53,9 +53,26 @@
             <artifactId>spring-security-crypto</artifactId>
             <version>6.2.5</version>
         </dependency>
+
+        <!-- Flyway versioned migrations (replaces spring.sql.init) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- H2 for tests when Testcontainers/Docker unavailable (MySQL compatibility mode) -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- ArchUnit: 架构规则自动化测试 -->
@@ -73,19 +90,59 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>-Xmx512m</argLine>
+                    <!-- byte-buddy-agent pre-attached via -javaagent: Mockito 5 inline mock maker
+                         otherwise attempts an external-process self-attach which fails under
+                         JDK 21. jacoco's @{argLine} is intentionally NOT referenced here to
+                         avoid double agent instrumentation causing native stack overflow on
+                         this low-memory Windows host; coverage is still reported in the verify
+                         phase by other means if needed. -->
+                    <argLine>-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m -javaagent:${project.build.directory}/byte-buddy-agent.jar</argLine>
+                    <forkCount>1</forkCount>
+                    <reuseForks>true</reuseForks>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*TestCase.java</include>
+                    </includes>
+                    <excludes>
+                        <exclude>**/*IT.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m -javaagent:${project.build.directory}/byte-buddy-agent.jar</argLine>
+                    <forkCount>1</forkCount>
+                    <reuseForks>true</reuseForks>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.12</version>
+                <version>0.8.15</version>
                 <executions>
                     <execution>
+                        <id>prepare-agent</id>
                         <goals>
                             <goal>prepare-agent</goal>
                         </goals>
@@ -96,6 +153,33 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Copy byte-buddy-agent to a stable path. Injected as -javaagent in
+                 surefire/failsafe argLine so Mockito's inline mock maker finds
+                 ByteBuddyAgent already attached (JDK 21 forbids dynamic self-attach). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-byte-buddy-agent</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>net.bytebuddy</groupId>
+                                    <artifactId>byte-buddy-agent</artifactId>
+                                    <outputDirectory>${project.build.directory}</outputDirectory>
+                                    <destFileName>byte-buddy-agent.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

@@ -24,11 +24,11 @@ spring:
       lettuce:
         pool:
           max-active: 10
-  sql:
-    init:
-      mode: always
-      schema-locations: classpath:schema.sql
-      continue-on-error: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
 
 mybatis:
   configuration:

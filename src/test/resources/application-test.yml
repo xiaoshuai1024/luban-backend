@@ -1,0 +1,47 @@
+# Test profile: H2 in MySQL compatibility mode (Testcontainers unavailable — Docker daemon not running).
+# Flyway migrations under classpath:db/migration run against H2.
+#
+# H2 MODE=MySQL accepts ENGINE=InnoDB / DEFAULT CHARSET=... (ignored) and the
+# DATETIME(3) / VARCHAR / JSON (treated as OTHER) types used by our DDL. UNIQUE KEY
+# and FOREIGN KEY constraints are honored. The pages index V...0001 also works.
+server:
+  port: 0
+
+spring:
+  main:
+    lazy-initialization: false
+  # Keep Redis auto-config ON so SettingsService's StringRedisTemplate dependency
+  # is satisfiable (bean is created lazily by Lettuce; no real connection at startup).
+  # Tests that don't hit /settings never touch Redis. Redis config points at a
+  # non-existent host — only fails on first command, which we never issue.
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6399
+      password:
+      database: 0
+      lettuce:
+        shutdown-timeout: 100ms
+  datasource:
+    url: jdbc:h2:mem:luban_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    # H2-specific migrations (JSON → CLOB so schema_json survives round-trip as raw
+    # JSON text, matching MySQL behavior). Production uses classpath:db/migration.
+    locations: classpath:db/h2-migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    clean-disabled: false
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+  type-aliases-package: com.luban.backend.entity
+
+logging:
+  level:
+    org.flywaydb: INFO
+    com.luban.backend: DEBUG

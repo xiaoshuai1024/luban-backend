@@ -59,7 +59,7 @@ public class UserService {
         try {
             userMapper.insert(u);
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
+            if (isUniqueViolation(e)) {
                 throw BusinessException.usernameConflict();
             }
             throw e;
@@ -79,7 +79,7 @@ public class UserService {
             int n = userMapper.update(u);
             if (n == 0) throw BusinessException.userNotFound();
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
+            if (isUniqueViolation(e)) {
                 throw BusinessException.usernameConflict();
             }
             throw e;
@@ -97,5 +97,17 @@ public class UserService {
         int n = userMapper.updateStatus(id, status, now);
         if (n == 0) throw BusinessException.userNotFound();
         return UserResponse.fromEntity(userMapper.getById(id));
+    }
+
+    /**
+     * Detect a UNIQUE-constraint violation across DB drivers:
+     *   - MySQL: "Duplicate entry ..."
+     *   - H2 (MySQL mode, used in tests): "Unique index or primary key violation"
+     * Real-MySQL behavior is unchanged vs. the prior "Duplicate"-only check.
+     */
+    private static boolean isUniqueViolation(DataIntegrityViolationException e) {
+        if (e == null || e.getMessage() == null) return false;
+        String m = e.getMessage();
+        return m.contains("Duplicate") || m.contains("Unique index") || m.contains("primary key violation");
     }
 }

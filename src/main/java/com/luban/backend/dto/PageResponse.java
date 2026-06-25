@@ -7,6 +7,9 @@ import com.luban.backend.entity.Page;
 
 import java.time.Instant;
 
+/**
+ * V2-T2: seo 透出（页面级 SEO，website 注入 useSeoMeta）。
+ */
 public record PageResponse(
     String id,
     String siteId,
@@ -14,6 +17,7 @@ public record PageResponse(
     String path,
     String status,
     JsonNode schema,
+    JsonNode seo,
     @JsonFormat(shape = JsonFormat.Shape.STRING) Instant createdAt,
     @JsonFormat(shape = JsonFormat.Shape.STRING) Instant updatedAt
 ) {
@@ -29,6 +33,14 @@ public record PageResponse(
                 schemaNode = MAPPER.createObjectNode();
             }
         }
+        JsonNode seoNode = null;
+        if (p.getSeoJson() != null && !p.getSeoJson().isEmpty()) {
+            try {
+                seoNode = MAPPER.readTree(p.getSeoJson());
+            } catch (Exception ignored) {
+                seoNode = null;
+            }
+        }
         return new PageResponse(
             p.getId(),
             p.getSiteId(),
@@ -36,6 +48,7 @@ public record PageResponse(
             p.getPath(),
             p.getStatus(),
             schemaNode,
+            seoNode,
             p.getCreatedAt(),
             p.getUpdatedAt()
         );
