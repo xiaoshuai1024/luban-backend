@@ -25,7 +25,7 @@ public class TrialScheduler {
     }
 
     /** 每小时整点执行（cron: 秒 分 时 日 月 周）。首次延迟 5 分钟避免启动尖峰。 */
-    @Scheduled(cron = "0 0 * * * *", initialDelay = 300_000)
+    @Scheduled(cron = "0 0 * * * *")
     public void expireTrials() {
         try {
             int count = trialService.expireTrials();

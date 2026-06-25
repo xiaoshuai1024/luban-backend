@@ -45,6 +45,7 @@ class LeadServiceTest {
     @Mock private UserSiteMapper userSiteMapper;
     @Mock private AntiSpamService antiSpamService;
     @Mock private LeadNotifyService notifyService;
+    @Mock private QuotaService quotaService;
 
     private LeadService service;
 
@@ -72,7 +73,10 @@ class LeadServiceTest {
         TenantGuardService tenantGuard = new TenantGuardService(userSiteMapper);
         service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper, tenantGuard,
                 new DedupService(), antiSpamService,
-                new LeadCryptoService(""), new LeadStatusMachine(), notifyService);
+                new LeadCryptoService(""), new LeadStatusMachine(), notifyService,
+                quotaService, userSiteMapper);
+        // v02 QuotaService：mock findOwnerUserId 返回 null（跳过配额计数，兼容历史测试）
+        org.mockito.Mockito.lenient().when(userSiteMapper.findOwnerUserId(anyString())).thenReturn(null);
     }
 
     private LeadSubmitRequest req(String phone) {
