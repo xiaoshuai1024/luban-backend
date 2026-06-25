@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Java Test (含 ArchUnit 架构测试)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Run tests (含 ArchUnit 架构测试)
+        run: mvn -B test
+
+      - name: Generate JaCoCo coverage report
+        run: mvn -B jacoco:report
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-coverage-report
+          path: target/site/jacoco/
