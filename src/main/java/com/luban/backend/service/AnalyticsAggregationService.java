@@ -42,7 +42,7 @@ public class AnalyticsAggregationService {
     }
 
     /** 每天凌晨 3:05 聚合前一天的数据。首次延迟 2 分钟。 */
-    @Scheduled(cron = "0 5 3 * * *", initialDelay = 120_000)
+    @Scheduled(cron = "0 5 3 * * *")
     public void aggregateYesterdayScheduled() {
         aggregateDaily(LocalDate.now().minusDays(1));
     }
