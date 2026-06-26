@@ -1,5 +1,6 @@
 package com.luban.backend.controller;
 
+import com.luban.backend.auth.UserContext;
 import com.luban.backend.dto.PageResponse;
 import com.luban.backend.dto.PageSaveRequest;
 import com.luban.backend.service.PageService;
@@ -65,5 +66,25 @@ public class PageController {
     public ResponseEntity<Void> delete(@PathVariable("id") String siteId, @PathVariable String pageId) {
         pageService.delete(siteId, pageId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ==================== P0 发布闭环 ====================
+
+    /** 发布页面：草稿 → published_pages 快照 + status=published */
+    @PostMapping("/{pageId}/publish")
+    public PageResponse publish(@PathVariable("id") String siteId, @PathVariable String pageId) {
+        return pageService.publish(siteId, pageId, UserContext.getUserId());
+    }
+
+    /** 下线页面：删 published_pages 快照 + status=archived */
+    @PostMapping("/{pageId}/unpublish")
+    public PageResponse unpublish(@PathVariable("id") String siteId, @PathVariable String pageId) {
+        return pageService.unpublish(siteId, pageId);
+    }
+
+    /** 草稿预览：返回 pages 表草稿内容（不读 published_pages） */
+    @GetMapping("/{pageId}/preview")
+    public PageResponse preview(@PathVariable("id") String siteId, @PathVariable String pageId) {
+        return pageService.getPreviewDraft(siteId, pageId);
     }
 }

@@ -11,6 +11,7 @@ import com.luban.backend.mapper.PageMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -122,7 +123,9 @@ public class SiteService {
      * V2 级联删除：先清理所有子表（leads/forms/datasources/collections/pages），
      * 再删 site。pages 删除后 page_versions 由 FK CASCADE 自动清。
      * 解决删除站点时 FK RESTRICT 报 500 的问题。
+     * Wave 2 致命修复：加 @Transactional 防止中途失败留孤儿数据。
      */
+    @Transactional(rollbackFor = Exception.class)
     public void delete(String id) {
         if (siteMapper.getById(id) == null) throw BusinessException.siteNotFound();
         leadMapper.deleteBySiteId(id);

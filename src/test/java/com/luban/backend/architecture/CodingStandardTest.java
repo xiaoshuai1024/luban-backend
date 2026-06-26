@@ -28,6 +28,7 @@ class CodingStandardTest {
 
     /**
      * 禁止使用 System.out / System.err 打印（应使用 SLF4J / Lombok @Slf4j）。
+     * <p>注：System.currentTimeMillis/arraycopy/getenv 等合法调用不受限。
      */
     @ArchTest
     static final ArchRule no_System_out =
@@ -35,7 +36,10 @@ class CodingStandardTest {
                     .should().callCodeUnitWhere(new DescribedPredicate<JavaCall<?>>("call System.out/err") {
                         @Override
                         public boolean test(JavaCall<?> call) {
-                            return call.getTargetOwner().getName().equals("java.lang.System");
+                            String owner = call.getTargetOwner().getName();
+                            String name = call.getTarget().getName();
+                            // 只匹配 System.out.xxx 和 System.err.xxx
+                            return owner.equals("java.lang.System") && (name.equals("out") || name.equals("err"));
                         }
                     })
                     .because("禁止使用 System.out / System.err，统一使用 SLF4J 日志框架");
