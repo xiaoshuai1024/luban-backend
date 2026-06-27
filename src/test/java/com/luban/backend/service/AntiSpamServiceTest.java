@@ -2,67 +2,82 @@ package com.luban.backend.service;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.RedisScript;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * AntiSpamService 单测：mock StringRedisTemplate 的 execute（Lua 脚本路径）。
- * 🟡 修复后改用 Lua 原子 INCR+EXPIRE。
+ * AntiSpamService 单测：mock {@link RateLimitExecutor}（普通接口，规避 JDK 23 下
+ * mock {@code StringRedisTemplate} 的 Mockito inline 限制）。
+ * 验证参数校验短路 + 滑动窗口计数→阈值判断语义。
  */
 @ExtendWith(MockitoExtension.class)
 class AntiSpamServiceTest {
 
     @Mock
-    private StringRedisTemplate redis;
+    private RateLimitExecutor executor;
 
-    private AntiSpamService service() {
-        return new AntiSpamService(redis);
-    }
+    @InjectMocks
+    private AntiSpamService service;
 
-    @SuppressWarnings("unchecked")
     @Test
     void firstRequestNotLimited() {
-        when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(1L);
-        assertThat(service().isRateLimited("1.2.3.4", "f1", 5, 60)).isFalse();
+        when(executor.countInWindow(anyString(), anyLong(), anyLong(), anyString(), anyInt())).thenReturn(1L);
+        assertThat(service.isRateLimited("1.2.3.4", "f1", 5, 60)).isFalse();
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void withinThresholdNotLimited() {
-        when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(5L);
-        assertThat(service().isRateLimited("1.2.3.4", "f1", 5, 60)).isFalse();
+        when(executor.countInWindow(anyString(), anyLong(), anyLong(), anyString(), anyInt())).thenReturn(5L);
+        assertThat(service.isRateLimited("1.2.3.4", "f1", 5, 60)).isFalse();
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void overThresholdLimited() {
-        when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(6L);
-        assertThat(service().isRateLimited("1.2.3.4", "f1", 5, 60)).isTrue();
+        when(executor.countInWindow(anyString(), anyLong(), anyLong(), anyString(), anyInt())).thenReturn(6L);
+        assertThat(service.isRateLimited("1.2.3.4", "f1", 5, 60)).isTrue();
     }
 
     @Test
     void nullIpSkipsRedis() {
-        assertThat(service().isRateLimited(null, "f1", 5, 60)).isFalse();
-        verifyNoInteractions(redis);
+        assertThat(service.isRateLimited(null, "f1", 5, 60)).isFalse();
+        verifyNoInteractions(executor);
     }
 
     @Test
     void blankIpSkipsRedis() {
-        assertThat(service().isRateLimited("  ", "f1", 5, 60)).isFalse();
-        verifyNoInteractions(redis);
+        assertThat(service.isRateLimited("  ", "f1", 5, 60)).isFalse();
+        verifyNoInteractions(executor);
     }
 
     @Test
     void nonPositiveMaxSkipsRedis() {
-        assertThat(service().isRateLimited("1.2.3.4", "f1", 0, 60)).isFalse();
-        verifyNoInteractions(redis);
+        assertThat(service.isRateLimited("1.2.3.4", "f1", 0, 60)).isFalse();
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void nonPositiveWindowSkipsRedis() {
+        // 滑动窗口：windowSeconds <= 0 为非法窗口，短路跳过 Redis
+        assertThat(service.isRateLimited("1.2.3.4", "f1", 5, 0)).isFalse();
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void usesCompositeKeyWithFormAndIp() {
+        // 验证 key 由 formId + ip 组合（防维度串扰）
+        when(executor.countInWindow(anyString(), anyLong(), anyLong(), anyString(), anyInt())).thenReturn(1L);
+        service.isRateLimited("1.2.3.4", "f1", 5, 60);
+        verify(executor).countInWindow(
+                org.mockito.ArgumentMatchers.eq("antispam:form:f1:ip:1.2.3.4"),
+                anyLong(), anyLong(), anyString(), anyInt());
     }
 }

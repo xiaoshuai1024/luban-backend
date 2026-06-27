@@ -1,27 +1,27 @@
 package com.luban.backend.service;
 
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
 /**
- * 留资防刷：基于 Redis 的固定窗口频控（维度 IP + formId）+ 验证码占位。
- * 纯逻辑通过 mock StringRedisTemplate 单测覆盖，不依赖 Redis 实际运行。
+ * 留资防刷：基于 Redis 的<b>滑动窗口</b>频控（维度 IP + formId）+ 验证码占位。
+ *
+ * <p>业务逻辑：参数校验 + 阈值判断。Redis 交互委托给 {@link RateLimitExecutor}，
+ * 单测只需 mock 该接口，绕开 mock {@code StringRedisTemplate}（JDK 23 限制）。
+ *
+ * <p>滑动窗口语义：每条请求以「成员=唯一 token、分值=时间戳」写入 ZSET，
+ * 先清理窗口外的过期成员，再计数。相比固定窗口可更平滑地抵御边界突刺流量。
  */
 @Service
 public class AntiSpamService {
 
-    private final StringRedisTemplate redis;
+    private final RateLimitExecutor executor;
 
-    public AntiSpamService(StringRedisTemplate redis) {
-        this.redis = redis;
+    public AntiSpamService(RateLimitExecutor executor) {
+        this.executor = executor;
     }
 
     /**
-     * 固定窗口频控。返回 true 表示已达阈值，应拒绝（LEAD_SPAM_BLOCKED）。
-     * 用 Lua 脚本保证 INCR + EXPIRE 原子性（🟡 修复 lost-expiry race）。
+     * 滑动窗口频控。返回 true 表示已达阈值，应拒绝（LEAD_SPAM_BLOCKED）。
      *
      * @param ip             客户端 IP（X-Forwarded-For）
      * @param formId         表单 ID
@@ -29,29 +29,16 @@ public class AntiSpamService {
      * @param windowSeconds  窗口秒数
      */
     public boolean isRateLimited(String ip, String formId, int max, int windowSeconds) {
-        if (ip == null || ip.isBlank() || formId == null || max <= 0) {
+        if (ip == null || ip.isBlank() || formId == null || max <= 0 || windowSeconds <= 0) {
             return false;
         }
         String key = key(ip, formId);
-        // 原子 INCR + 仅首次 EXPIRE（Lua 脚本，避免进程崩溃导致计数 key 永不过期 → 永久限流）
-        Long count = redis.execute(
-                RATE_LIMIT_SCRIPT,
-                List.of(key),
-                String.valueOf(windowSeconds)
-        );
-        return count != null && count > max;
-    }
-
-    /** Lua：原子 INCR + 仅首次 EXPIRE。 */
-    private static final DefaultRedisScript<Long> RATE_LIMIT_SCRIPT;
-    static {
-        RATE_LIMIT_SCRIPT = new DefaultRedisScript<>();
-        RATE_LIMIT_SCRIPT.setScriptText(
-                "local c = redis.call('INCR', KEYS[1]) " +
-                "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1])) end " +
-                "return c"
-        );
-        RATE_LIMIT_SCRIPT.setResultType(Long.class);
+        long now = System.currentTimeMillis();
+        long windowStart = now - windowSeconds * 1000L;
+        // 成员唯一 token：时间戳 + 纳秒尾数，避免同毫秒请求相互覆盖。
+        String member = now + ":" + System.nanoTime();
+        long count = executor.countInWindow(key, windowStart, now, member, windowSeconds);
+        return count > max;
     }
 
     /**

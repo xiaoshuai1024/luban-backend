@@ -82,6 +82,20 @@
             <version>1.3.0</version>
             <scope>test</scope>
         </dependency>
+        <!-- ByteBuddy 1.15.x：支持 JDK 23 的 inline mock（覆盖 Spring Boot 3.2.5 默认的 1.14.13，
+             1.14.13 在 JDK 23 下无法 attach，导致 Mockito mock 全部失败） -->
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>1.15.11</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <version>1.15.11</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
