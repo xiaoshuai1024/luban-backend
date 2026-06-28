@@ -1,4 +1,5 @@
 package com.luban.backend.contract;
+import com.luban.backend.publicside.service.PublicPageService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,6 +1,6 @@
 package com.luban.backend.architecture;
 
-import com.luban.backend.exception.BusinessException;
+import com.luban.backend.shared.exception.BusinessException;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
