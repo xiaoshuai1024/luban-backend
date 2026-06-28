@@ -32,4 +32,8 @@ public interface CampaignMapper {
 
     @Delete("DELETE FROM campaigns WHERE id = #{id}")
     int deleteById(String id);
+
+    /** 级联删：删站点时清该站所有活动（SiteService.delete 调用） */
+    @Delete("DELETE FROM campaigns WHERE site_id = #{siteId}")
+    int deleteBySiteId(String siteId);
 }

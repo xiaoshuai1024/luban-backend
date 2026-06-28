@@ -9,6 +9,8 @@ import com.luban.backend.shared.mapper.FormMapper;
 import com.luban.backend.shared.mapper.LeadMapper;
 import com.luban.backend.shared.mapper.PageMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.mapper.ChannelMapper;
+import com.luban.backend.shared.mapper.CampaignMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,15 +31,21 @@ public class SiteService {
     private final LeadMapper leadMapper;
     private final DatasourceMapper datasourceMapper;
     private final CollectionMapper collectionMapper;
+    // app-deeplink-backend-arch T8：短链子表也需级联清理
+    private final ChannelMapper channelMapper;
+    private final CampaignMapper campaignMapper;
 
     public SiteService(SiteMapper siteMapper, PageMapper pageMapper, FormMapper formMapper,
-                       LeadMapper leadMapper, DatasourceMapper datasourceMapper, CollectionMapper collectionMapper) {
+                       LeadMapper leadMapper, DatasourceMapper datasourceMapper, CollectionMapper collectionMapper,
+                       ChannelMapper channelMapper, CampaignMapper campaignMapper) {
         this.siteMapper = siteMapper;
         this.pageMapper = pageMapper;
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
         this.datasourceMapper = datasourceMapper;
         this.collectionMapper = collectionMapper;
+        this.channelMapper = channelMapper;
+        this.campaignMapper = campaignMapper;
     }
 
     public List<SiteResponse> list() {
@@ -120,10 +128,11 @@ public class SiteService {
     }
 
     /**
-     * V2 级联删除：先清理所有子表（leads/forms/datasources/collections/pages），
+     * V2 级联删除：先清理所有子表（leads/forms/datasources/collections/pages/channels/campaigns），
      * 再删 site。pages 删除后 page_versions 由 FK CASCADE 自动清。
      * 解决删除站点时 FK RESTRICT 报 500 的问题。
      * Wave 2 致命修复：加 @Transactional 防止中途失败留孤儿数据。
+     * app-deeplink-backend-arch T8：扩展级联含 channels/campaigns（短链子表）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void delete(String id) {
@@ -132,6 +141,8 @@ public class SiteService {
         formMapper.deleteBySiteId(id);
         datasourceMapper.deleteBySiteId(id);
         collectionMapper.deleteBySiteId(id);
+        channelMapper.deleteBySiteId(id);   // T8: channels 先删（FK 引用 campaigns）
+        campaignMapper.deleteBySiteId(id);  // T8: campaigns 后删
         pageMapper.deleteBySiteId(id);
         int n = siteMapper.deleteById(id);
         if (n == 0) throw BusinessException.siteNotFound();

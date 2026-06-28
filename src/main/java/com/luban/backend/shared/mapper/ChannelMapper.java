@@ -40,4 +40,8 @@ public interface ChannelMapper {
 
     @Delete("DELETE FROM channels WHERE id = #{id}")
     int deleteById(String id);
+
+    /** 级联删：删站点时清该站所有渠道（SiteService.delete 调用） */
+    @Delete("DELETE FROM channels WHERE site_id = #{siteId}")
+    int deleteBySiteId(String siteId);
 }
