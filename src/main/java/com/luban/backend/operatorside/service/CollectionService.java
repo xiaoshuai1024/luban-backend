@@ -3,7 +3,7 @@ package com.luban.backend.operatorside.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.dto.CollectionItemResponse;
-import com.luban.backend.shared.dto.CollectionResponse;
+import com.luban.backend.shared.port.PublicCollectionPort;import com.luban.backend.shared.dto.CollectionResponse;
 import com.luban.backend.shared.entity.ContentCollection;
 import com.luban.backend.shared.entity.ContentCollectionItem;
 import com.luban.backend.shared.exception.BusinessException;
@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
  * Collection + CollectionItem CRUD；siteId tenant guard；name 冲突检测。
  */
 @Service
-public class CollectionService {
+public class CollectionService implements PublicCollectionPort {
 
     private final CollectionMapper collectionMapper;
     private final SiteMapper siteMapper;

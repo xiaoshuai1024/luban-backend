@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.dto.LeadResponse;
 import com.luban.backend.shared.dto.LeadSubmitRequest;
 import com.luban.backend.shared.dto.LeadSubmitResult;
+import com.luban.backend.shared.port.LeadSubmissionPort;
 import com.luban.backend.shared.entity.Form;
 import com.luban.backend.shared.entity.Lead;
 import com.luban.backend.shared.entity.LeadAuditLog;
@@ -32,7 +33,7 @@ import java.util.UUID;
  * 编排逻辑通过 mock mapper/service 单测覆盖；DB 真实交互由集成测试覆盖。
  */
 @Service
-public class LeadService {
+public class LeadService implements LeadSubmissionPort {
 
     /** P0 防刷默认值（P1 从 form.antiSpamJson 解析）。 */
     static final int DEFAULT_RATE_MAX = 5;

@@ -2,7 +2,7 @@ package com.luban.backend.publicside.controller;
 
 import com.luban.backend.shared.dto.LeadSubmitRequest;
 import com.luban.backend.shared.dto.LeadSubmitResult;
-import com.luban.backend.operatorside.service.LeadService;
+import com.luban.backend.shared.port.LeadSubmissionPort;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,12 +18,12 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/lead/forms")
 public class PublicLeadController {
 
-    private final LeadService leadService;
+    private final LeadSubmissionPort leadService;
     /** 可信代理标记（非空时信任 X-Forwarded-For）。默认空=不信任。 */
     @Value("${app.trusted-proxy:}")
     private String trustedProxy;
 
-    public PublicLeadController(LeadService leadService) {
+    public PublicLeadController(LeadSubmissionPort leadService) {
         this.leadService = leadService;
     }
 

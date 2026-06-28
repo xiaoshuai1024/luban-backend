@@ -2,7 +2,7 @@ package com.luban.backend.operatorside.service;
 import com.luban.backend.shared.crypto.LeadCryptoService;
 
 import com.luban.backend.shared.dto.AnalyticsEventInput;
-import com.luban.backend.shared.entity.AnalyticsEvent;
+import com.luban.backend.shared.port.AnalyticsIngestPort;import com.luban.backend.shared.entity.AnalyticsEvent;
 import com.luban.backend.shared.mapper.AnalyticsEventMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +19,7 @@ import java.util.UUID;
  * 限流：单批最多 50 条（防滥用）。
  */
 @Service
-public class AnalyticsEventService {
+public class AnalyticsEventService implements AnalyticsIngestPort {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyticsEventService.class);
     private static final int MAX_BATCH = 50;

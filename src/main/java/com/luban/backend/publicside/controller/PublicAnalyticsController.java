@@ -1,7 +1,7 @@
 package com.luban.backend.publicside.controller;
 
 import com.luban.backend.shared.dto.AnalyticsEventInput;
-import com.luban.backend.operatorside.service.AnalyticsEventService;
+import com.luban.backend.shared.port.AnalyticsIngestPort;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,9 +20,9 @@ import java.util.Map;
 @RequestMapping("/public/analytics")
 public class PublicAnalyticsController {
 
-    private final AnalyticsEventService eventService;
+    private final AnalyticsIngestPort eventService;
 
-    public PublicAnalyticsController(AnalyticsEventService eventService) {
+    public PublicAnalyticsController(AnalyticsIngestPort eventService) {
         this.eventService = eventService;
     }
 

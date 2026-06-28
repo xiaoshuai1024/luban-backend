@@ -6,7 +6,7 @@ import com.luban.backend.shared.dto.CollectionItemResponse;
 import com.luban.backend.shared.dto.PageResponse;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.mapper.SiteMapper;
-import com.luban.backend.operatorside.service.CollectionService;
+import com.luban.backend.shared.port.PublicCollectionPort;
 import com.luban.backend.publicside.service.PublicPageService;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,11 +21,11 @@ import java.util.Map;
 public class PublicController {
 
     private final PublicPageService publicPageService;
-    private final CollectionService collectionService;
+    private final PublicCollectionPort collectionService;
     private final SiteMapper siteMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PublicController(PublicPageService publicPageService, CollectionService collectionService, SiteMapper siteMapper) {
+    public PublicController(PublicPageService publicPageService, PublicCollectionPort collectionService, SiteMapper siteMapper) {
         this.publicPageService = publicPageService;
         this.collectionService = collectionService;
         this.siteMapper = siteMapper;

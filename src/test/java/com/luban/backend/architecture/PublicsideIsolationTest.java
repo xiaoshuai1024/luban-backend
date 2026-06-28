@@ -18,9 +18,9 @@ import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
  *   <li>shared（共享领域层）禁止反向依赖 publicside/operatorside — 纯领域不感知调用方</li>
  * </ul>
  *
- * <p><b>已知技术债（T2 待消除）</b>：publicside 的 3 个 controller 目前依赖 operatorside 的
- * 3 个 service 方法（留资提交/集合公开读/埋点接收），属于历史耦合。这些违规通过 freeze 冻结，
- * <b>新增</b> publicside→operatorside 依赖将立即失败。T2 拆分跨界 Service 时逐个解冻消除。
+ * <p><b>T2 已完成</b>：publicside 原依赖 operatorside 的 3 处耦合（留资提交/集合公开读/埋点接收）
+ * 已通过 shared/port 端口接口（依赖倒置）消除，publicside 现仅依赖 shared port 接口。
+ * 规则当前零违规；freeze 保留作为防御机制，应对未来可能的临时引入。
  */
 @AnalyzeClasses(packages = "com.luban.backend",
         importOptions = {ImportOption.DoNotIncludeTests.class, ImportOption.DoNotIncludeJars.class})
@@ -28,15 +28,15 @@ class PublicsideIsolationTest {
 
     /**
      * publicside 禁止依赖 operatorside。
-     * 这是 C 端与运营端的安全边界。当前 3 处历史违规已冻结（见类 Javadoc），
-     * freeze 保证：已冻结违规不阻断构建，但任何<b>新增</b>违规立即失败。
+     * 这是 C 端与运营端的安全边界。T2 已通过 shared/port 端口接口消除全部历史耦合，
+     * 当前零违规。freeze 保留作为防御机制，防止未来回退。
      */
     @ArchTest
     static final ArchRule publicside_should_not_depend_on_operatorside =
             freeze(noClasses().that().resideInAPackage("..publicside..")
                     .should().dependOnClassesThat().resideInAPackage("..operatorside.."))
                     .because("C 端（publicside）禁止依赖运营端（operatorside）；"
-                            + "已知 3 处历史违规已冻结，T2 拆分后消除");
+                            + "C 端所需运营域能力经 shared/port 端口接口注入（T2 已完成）");
 
     /**
      * operatorside 禁止依赖 publicside。
