@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@MapperScan("com.luban.backend.mapper")
+@MapperScan("com.luban.backend.shared.mapper")
 @EnableScheduling
 public class LubanBackendApplication {
 
