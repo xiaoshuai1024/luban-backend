@@ -83,6 +83,7 @@ public class PageService {
     public PageResponse update(String siteId, String pageId, String name, String path, String status, JsonNode schema, JsonNode seo) {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
+        String oldStatus = page.getStatus();
         page.setName(name);
         page.setPath(path);
         page.setStatus(status != null ? status : page.getStatus());
@@ -104,7 +105,47 @@ public class PageService {
         }
         // V2-T8：保存后生成快照（每次保存一条版本）
         versionService.createSnapshot(page.getId(), schema, "保存", null);
+        // 契约一致性：PUT 更新 status 时同步 published_pages 快照，
+        // 使「PUT status=published」与「POST /publish」行为一致（website 公开访问才能查到）。
+        syncPublishedState(siteId, page, oldStatus);
         return PageResponse.fromEntity(page);
+    }
+
+    /**
+     * 根据 pages.status 同步 published_pages 快照。
+     * - status 变为 published：写入快照（复用 publish 快照构造）
+     * - status 从 published 变为其他：清理快照（等同下线）
+     * 保持「无论用 PUT 还是 POST /publish，公开访问行为一致」。
+     */
+    private void syncPublishedState(String siteId, Page page, String oldStatus) {
+        String newStatus = page.getStatus();
+        boolean nowPublished = "published".equals(newStatus);
+        boolean wasPublished = "published".equals(oldStatus);
+        if (nowPublished && !wasPublished) {
+            // 草稿→发布：写入快照（字段对齐 publish() 方法，name/publishedBy 必填）
+            publishedPageMapper.deleteByPageIdAndSiteId(page.getId(), siteId);
+            PublishedPage snapshot = new PublishedPage();
+            snapshot.setId(java.util.UUID.randomUUID().toString());
+            snapshot.setSiteId(siteId);
+            snapshot.setPageId(page.getId());
+            snapshot.setName(page.getName());
+            snapshot.setPath(page.getPath());
+            snapshot.setSchemaJson(page.getSchemaJson());
+            snapshot.setSeoJson(page.getSeoJson());
+            snapshot.setPublishedAt(java.time.Instant.now());
+            snapshot.setPublishedBy(null);
+            try {
+                publishedPageMapper.insert(snapshot);
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
+                    throw BusinessException.pagePathConflict();
+                }
+                throw e;
+            }
+        } else if (!nowPublished && wasPublished) {
+            // 发布→下线：清理快照
+            publishedPageMapper.deleteByPageIdAndSiteId(page.getId(), siteId);
+        }
     }
 
     public void delete(String siteId, String pageId) {
