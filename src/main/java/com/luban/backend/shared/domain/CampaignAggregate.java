@@ -137,20 +137,19 @@ public class CampaignAggregate {
         return ch;
     }
 
+    private static final String ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
+
     /**
      * base62 短码生成（6 位，[0-9a-zA-Z]）。
+     * 用 SecureRandom 逐位独立均匀采样，消除偏置 + 避免 Math.abs(Long.MIN_VALUE) 边界 bug。
      * 碰撞由 DB 唯一约束（uk_short_url + uk_site_code）兜底，调用方捕获重试。
      */
     private static String generateBase62Code() {
-        String alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        // 用 UUID 随机性生成 6 位
-        long seed = UUID.randomUUID().getMostSignificantBits();
-        StringBuilder sb = new StringBuilder(6);
-        long n = Math.abs(seed);
+        char[] buf = new char[6];
         for (int i = 0; i < 6; i++) {
-            sb.append(alphabet.charAt((int) (n % 62)));
-            n /= 62;
+            buf[i] = ALPHABET.charAt(SECURE_RNG.nextInt(62));
         }
-        return sb.toString();
+        return new String(buf);
     }
 }

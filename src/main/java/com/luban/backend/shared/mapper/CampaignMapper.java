@@ -27,11 +27,11 @@ public interface CampaignMapper {
             "VALUES (#{id}, #{siteId}, #{name}, #{startAt}, #{endAt}, #{status}, #{createdAt}, #{updatedAt})")
     int insert(Campaign campaign);
 
-    @Update("UPDATE campaigns SET name=#{name}, start_at=#{startAt}, end_at=#{endAt}, status=#{status}, updated_at=#{updatedAt} WHERE id=#{id}")
+    @Update("UPDATE campaigns SET name=#{name}, start_at=#{startAt}, end_at=#{endAt}, status=#{status}, updated_at=#{updatedAt} WHERE id=#{id} AND site_id=#{siteId}")
     int update(Campaign campaign);
 
-    @Delete("DELETE FROM campaigns WHERE id = #{id}")
-    int deleteById(String id);
+    @Delete("DELETE FROM campaigns WHERE id = #{id} AND site_id = #{siteId}")
+    int deleteByIdAndSiteId(@Param("id") String id, @Param("siteId") String siteId);
 
     /** 级联删：删站点时清该站所有活动（SiteService.delete 调用） */
     @Delete("DELETE FROM campaigns WHERE site_id = #{siteId}")

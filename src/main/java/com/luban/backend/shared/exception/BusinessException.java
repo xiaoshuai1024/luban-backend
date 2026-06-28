@@ -162,6 +162,11 @@ public class BusinessException extends RuntimeException {
         return new BusinessException(HttpStatus.NOT_FOUND, "CHANNEL_NOT_FOUND", "渠道不存在");
     }
 
+    /** campaign 下有 channel 时拒绝删除（409，防 FK RESTRICT 500） */
+    public static BusinessException campaignHasChannels() {
+        return new BusinessException(HttpStatus.CONFLICT, "CAMPAIGN_HAS_CHANNELS", "活动下仍有渠道，无法删除");
+    }
+
     /** shortCode 不存在（404，区分"不存在"与"已停用"） */
     public static BusinessException shortLinkNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "SHORT_LINK_NOT_FOUND", "短链不存在");
