@@ -61,6 +61,7 @@ class DefaultLeadNotifyServiceTest {
 
     @Test
     void blankUrlSkipsWebhook() {
+        // 单构造器：webhookUrl + RestClient（mock）
         DefaultLeadNotifyService svc = new DefaultLeadNotifyService("", restClient);
         svc.notifyNewLead(sampleLead(), sampleForm());
         // 未配置 URL：不应触碰 RestClient

@@ -4,6 +4,7 @@ import com.luban.backend.entity.Form;
 import com.luban.backend.entity.Lead;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
@@ -19,39 +20,24 @@ import java.util.Map;
  * <p>{@link #notifyNewLead} 标注 {@code @Async("leadNotifyExecutor")}，在独立线程池执行 HTTP 投递。
  * 调用方（{@code LeadService} 在事务 afterCommit 中调用）所在线程不会因 Webhook 阻塞或超时而受影响。
  * 投递异常被捕获并降级为日志，保证不重放、不抛穿到调用方。
+ *
+ * <p>构造注入：webhookUrl 来自配置（lead.webhook.url），RestClient 由
+ * {@link com.luban.backend.config.LeadNotifyConfig#leadNotifyRestClient()} 提供单例 Bean。
+ * 单测可通过 @MockBean / 构造注入 mock RestClient（无需多构造器，规避 Spring 歧义）。
  */
 @Service
 public class DefaultLeadNotifyService implements LeadNotifyService {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultLeadNotifyService.class);
 
-    /** 超时（毫秒）。Webhook 通知不可靠时可快速失败，不堆积线程池。 */
-    private static final int CONNECT_TIMEOUT_MS = 3_000;
-
     private final String webhookUrl;
     private final RestClient restClient;
 
-    /**
-     * 生产构造：从配置读取 Webhook URL，构建默认 RestClient。
-     * 单测请使用 {@link #DefaultLeadNotifyService(String, RestClient)} 注入 mock RestClient。
-     */
-    public DefaultLeadNotifyService(@Value("${lead.webhook.url:}") String webhookUrl) {
-        this(webhookUrl, defaultRestClient());
-    }
-
-    /** 可注入 RestClient 的构造，便于单测 mock。 */
-    DefaultLeadNotifyService(String webhookUrl, RestClient restClient) {
+    public DefaultLeadNotifyService(
+            @Value("${lead.webhook.url:}") String webhookUrl,
+            @Qualifier("leadNotifyRestClient") RestClient restClient) {
         this.webhookUrl = webhookUrl;
         this.restClient = restClient;
-    }
-
-    private static RestClient defaultRestClient() {
-        return RestClient.builder()
-                .requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory() {{
-                    setConnectTimeout(CONNECT_TIMEOUT_MS);
-                    setReadTimeout(CONNECT_TIMEOUT_MS);
-                }})
-                .build();
     }
 
     @Override
