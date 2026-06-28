@@ -7,6 +7,7 @@ import com.luban.backend.dto.FormSaveRequest;
 import com.luban.backend.entity.Form;
 import com.luban.backend.exception.BusinessException;
 import com.luban.backend.mapper.FormMapper;
+import com.luban.backend.mapper.LeadMapper;
 import com.luban.backend.mapper.SiteMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,11 +25,13 @@ public class FormService {
 
     private final FormMapper formMapper;
     private final SiteMapper siteMapper;
+    private final LeadMapper leadMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public FormService(FormMapper formMapper, SiteMapper siteMapper) {
+    public FormService(FormMapper formMapper, SiteMapper siteMapper, LeadMapper leadMapper) {
         this.formMapper = formMapper;
         this.siteMapper = siteMapper;
+        this.leadMapper = leadMapper;
     }
 
     public List<FormResponse> list(String siteId) {
@@ -79,6 +82,17 @@ public class FormService {
         existing.setUpdatedAt(Instant.now());
         formMapper.update(existing);
         return FormResponse.fromEntity(existing);
+    }
+
+    /**
+     * 删除表单：先校验存在，再校验无线索（有线索则 409 拒绝，防误删数据）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void delete(String siteId, String id) {
+        Form existing = formMapper.getByIdAndSiteId(id, siteId);
+        if (existing == null) throw BusinessException.formNotFound();
+        if (leadMapper.countByFormId(id) > 0) throw BusinessException.formHasLeads();
+        formMapper.deleteById(id);
     }
 
     private String toJson(JsonNode node) {

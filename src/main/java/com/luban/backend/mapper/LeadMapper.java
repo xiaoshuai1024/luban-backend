@@ -105,4 +105,8 @@ public interface LeadMapper {
     /** V2 级联删除：删站点时先清 leads */
     @Delete("DELETE FROM leads WHERE site_id = #{siteId}")
     int deleteBySiteId(@Param("siteId") String siteId);
+
+    /** 按 formId 统计线索数（删表单前级联校验用） */
+    @Select("SELECT COUNT(*) FROM leads WHERE form_id = #{formId}")
+    int countByFormId(@Param("formId") String formId);
 }

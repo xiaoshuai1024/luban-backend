@@ -41,4 +41,8 @@ public interface FormMapper {
     /** V2 级联删除：删站点时先清 forms */
     @Delete("DELETE FROM forms WHERE site_id = #{siteId}")
     int deleteBySiteId(@Param("siteId") String siteId);
+
+    /** 删除单个表单（管理端 DELETE，须先校验无线索） */
+    @Delete("DELETE FROM forms WHERE id = #{id}")
+    int deleteById(@Param("id") String id);
 }

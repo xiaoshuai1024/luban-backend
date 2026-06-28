@@ -42,4 +42,10 @@ public class FormController {
     public FormResponse update(@RequestParam String siteId, @PathVariable String id, @Valid @RequestBody FormSaveRequest req) {
         return formService.update(siteId, id, req);
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@RequestParam String siteId, @PathVariable String id) {
+        formService.delete(siteId, id);
+        return ResponseEntity.noContent().build();
+    }
 }

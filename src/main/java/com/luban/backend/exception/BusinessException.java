@@ -88,6 +88,10 @@ public class BusinessException extends RuntimeException {
         return new BusinessException(HttpStatus.CONFLICT, "LEAD_DUPLICATE", "重复留资");
     }
 
+    public static BusinessException formHasLeads() {
+        return new BusinessException(HttpStatus.CONFLICT, "FORM_HAS_LEADS", "表单下存在线索，无法删除");
+    }
+
     public static BusinessException leadSpamBlocked() {
         return new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "LEAD_SPAM_BLOCKED", "操作过于频繁，请稍后再试");
     }
