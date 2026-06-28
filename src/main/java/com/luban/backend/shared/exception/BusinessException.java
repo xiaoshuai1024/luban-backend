@@ -151,4 +151,60 @@ public class BusinessException extends RuntimeException {
     public static BusinessException collectionItemNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "COLLECTION_ITEM_NOT_FOUND", "内容项不存在");
     }
+
+    // ---- Campaign / Channel 渠道短链相关（app-deeplink-backend-arch plan T7）----
+
+    public static BusinessException campaignNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "CAMPAIGN_NOT_FOUND", "活动不存在");
+    }
+
+    public static BusinessException channelNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "CHANNEL_NOT_FOUND", "渠道不存在");
+    }
+
+    /** shortCode 不存在（404，区分"不存在"与"已停用"） */
+    public static BusinessException shortLinkNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "SHORT_LINK_NOT_FOUND", "短链不存在");
+    }
+
+    /** channel.status=inactive（410 Gone，区分"不存在"与"已停用"） */
+    public static BusinessException shortLinkInactive() {
+        return new BusinessException(HttpStatus.valueOf(410), "SHORT_LINK_INACTIVE", "短链已停用");
+    }
+
+    /** 同站短码重复（409，违反 uk_site_code） */
+    public static BusinessException channelCodeDuplicate() {
+        return new BusinessException(HttpStatus.CONFLICT, "CHANNEL_CODE_DUPLICATE", "短码已存在");
+    }
+
+    /** 短码生成碰撞重试耗尽（503） */
+    public static BusinessException codeGenFailed() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "CODE_GEN_FAILED", "短码生成失败，请重试");
+    }
+
+    /** channel.target_page_id 的 page.site_id ≠ channel.site_id（400，防开放重定向） */
+    public static BusinessException pageNotBelongToSite() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "PAGE_NOT_BELONG_TO_SITE", "目标页面不属于该站点");
+    }
+
+    /** 状态机非法转换（400） */
+    public static BusinessException invalidStateTransition(String from, String to) {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_STATE_TRANSITION",
+                "非法状态转换: " + from + " → " + to);
+    }
+
+    /** 活动时间窗非法 endAt < startAt（400） */
+    public static BusinessException invalidTimeWindow() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_TIME_WINDOW", "结束时间不能早于开始时间");
+    }
+
+    /** 短码格式不符 [a-zA-Z0-9_-]{1,32}（400） */
+    public static BusinessException invalidCodeFormat() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_CODE_FORMAT", "短码格式非法（仅允许字母数字下划线连字符，1-32 位）");
+    }
+
+    /** 必填字段缺失（400） */
+    public static BusinessException missingField(String field) {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "MISSING_FIELD", "缺少必填字段: " + field);
+    }
 }

@@ -1,0 +1,43 @@
+package com.luban.backend.shared.mapper;
+
+import com.luban.backend.shared.entity.Channel;
+import org.apache.ibatis.annotations.*;
+
+import java.util.List;
+
+/**
+ * Channel mapper（app-deeplink-backend-arch plan T10）。
+ * 参数化查询防注入；显式列名（禁 SELECT *，对齐既有 mapper 风格）。
+ */
+@Mapper
+public interface ChannelMapper {
+
+    String COLUMNS = "id, site_id, campaign_id, code, type, utm_template, short_url, target_page_id, status, created_at, updated_at";
+
+    @Select("SELECT " + COLUMNS + " FROM channels WHERE site_id = #{siteId} ORDER BY created_at DESC")
+    List<Channel> listBySiteId(String siteId);
+
+    @Select("SELECT " + COLUMNS + " FROM channels WHERE id = #{id}")
+    Channel getById(String id);
+
+    @Select("SELECT " + COLUMNS + " FROM channels WHERE id = #{id} AND site_id = #{siteId}")
+    Channel getByIdAndSiteId(@Param("id") String id, @Param("siteId") String siteId);
+
+    /** 短链解析：按 short_url 查（O(1)，uk_short_url 索引） */
+    @Select("SELECT " + COLUMNS + " FROM channels WHERE short_url = #{shortUrl}")
+    Channel getByShortUrl(String shortUrl);
+
+    /** 校验同站短码是否已存在（uk_site_code 冲突预检） */
+    @Select("SELECT COUNT(*) FROM channels WHERE site_id = #{siteId} AND code = #{code}")
+    int countBySiteIdAndCode(@Param("siteId") String siteId, @Param("code") String code);
+
+    @Insert("INSERT INTO channels (id, site_id, campaign_id, code, type, utm_template, short_url, target_page_id, status, created_at, updated_at) " +
+            "VALUES (#{id}, #{siteId}, #{campaignId}, #{code}, #{type}, #{utmTemplate}, #{shortUrl}, #{targetPageId}, #{status}, #{createdAt}, #{updatedAt})")
+    int insert(Channel channel);
+
+    @Update("UPDATE channels SET campaign_id=#{campaignId}, code=#{code}, type=#{type}, utm_template=#{utmTemplate}, short_url=#{shortUrl}, target_page_id=#{targetPageId}, status=#{status}, updated_at=#{updatedAt} WHERE id=#{id}")
+    int update(Channel channel);
+
+    @Delete("DELETE FROM channels WHERE id = #{id}")
+    int deleteById(String id);
+}
