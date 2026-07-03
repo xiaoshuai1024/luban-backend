@@ -1,4 +1,5 @@
 package com.luban.backend.contract;
+import com.luban.backend.publicside.service.PublicPageService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class PublicPageContractTest {
         // child table added by W1-T2; without this the DELETE FROM sites below violates
         // fk_datasources_site when DatasourceContractTest ran earlier in the same JVM).
         jdbc.update("DELETE FROM datasources");
+        jdbc.update("DELETE FROM published_pages");
         jdbc.update("DELETE FROM pages");
         jdbc.update("DELETE FROM sites");
         Instant now = Instant.now();
@@ -49,8 +51,10 @@ class PublicPageContractTest {
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 SITE_ID, "Demo Site", SLUG, "https://demo.example.com", "active", now, now);
 
-        // published page at /home
+        // published page at /home — P0: 同步插入 published_pages（PublicPageService 读此表）
         insertPage("page-pub", SITE_ID, "Home", "/home", "published",
+                "{\"components\":[{\"type\":\"hero\",\"props\":{\"title\":\"Hello\"}}]}");
+        insertPublishedPage("page-pub", SITE_ID, "Home", "/home",
                 "{\"components\":[{\"type\":\"hero\",\"props\":{\"title\":\"Hello\"}}]}");
         // draft page at /draft — must NOT be returned by public endpoint
         insertPage("page-draft", SITE_ID, "Draft Page", "/draft", "draft",
@@ -62,6 +66,14 @@ class PublicPageContractTest {
         jdbc.update("INSERT INTO pages (id, site_id, name, path, status, schema_json, created_at, updated_at) " +
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 id, siteId, name, path, status, schemaJson, now, now);
+    }
+
+    /** P0 发布闭环：同步插入 published_pages 快照表 */
+    private void insertPublishedPage(String pageId, String siteId, String name, String path, String schemaJson) {
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO published_pages (id, page_id, site_id, name, path, schema_json, published_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "pub-" + pageId, pageId, siteId, name, path, schemaJson, now);
     }
 
     @Test

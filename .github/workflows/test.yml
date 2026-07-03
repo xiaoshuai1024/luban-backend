@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Verify (mvn)
+    name: Verify (mvn verify + ArchUnit + JaCoCo)
     runs-on: ubuntu-latest
     # 使用内置 H2 + test profile，无需外部 MySQL/Redis
     services: {}
@@ -21,8 +21,18 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
           cache: maven
 
-      - name: mvn verify (test profile, H2)
+      - name: mvn verify (含 ArchUnit 架构测试, test profile, H2)
         run: mvn -B -q verify
+
+      - name: Generate JaCoCo coverage report
+        run: mvn -B jacoco:report
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-coverage-report
+          path: target/site/jacoco/
