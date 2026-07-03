@@ -212,4 +212,41 @@ public class BusinessException extends RuntimeException {
     public static BusinessException missingField(String field) {
         return new BusinessException(HttpStatus.BAD_REQUEST, "MISSING_FIELD", "缺少必填字段: " + field);
     }
+
+    // === 模板市场（template-marketplace）===
+
+    /** 模板不存在（404） */
+    public static BusinessException templateNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "TEMPLATE_NOT_FOUND", "模板不存在");
+    }
+
+    /** 模板未发布（不可安装）（409） */
+    public static BusinessException templateNotPublished() {
+        return new BusinessException(HttpStatus.CONFLICT, "TEMPLATE_NOT_PUBLISHED", "模板未发布，不可安装");
+    }
+
+    /** 模板 slug 冲突（409） */
+    public static BusinessException templateSlugConflict() {
+        return new BusinessException(HttpStatus.CONFLICT, "TEMPLATE_SLUG_CONFLICT", "模板 slug 已存在");
+    }
+
+    /** 模板类目非法（400） */
+    public static BusinessException templateInvalidCategory() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "TEMPLATE_INVALID_CATEGORY", "模板类目非法");
+    }
+
+    /** 模板 slug 格式非法（400） */
+    public static BusinessException templateInvalidSlug() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "TEMPLATE_INVALID_SLUG", "模板 slug 格式非法（仅允许字母数字下划线短横线，1-128 位）");
+    }
+
+    /** 模板状态机非法转移（409） */
+    public static BusinessException templateInvalidStatusTransition(String from, String to) {
+        return new BusinessException(HttpStatus.CONFLICT, "TEMPLATE_INVALID_TRANSITION", "模板状态非法转移: " + from + " → " + to);
+    }
+
+    /** 模板 schema 为空（不可发布）（400） */
+    public static BusinessException templateSchemaEmpty() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "TEMPLATE_SCHEMA_EMPTY", "模板 schema 不能为空");
+    }
 }
