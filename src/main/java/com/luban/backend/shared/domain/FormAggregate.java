@@ -113,14 +113,22 @@ public final class FormAggregate {
         root.setUpdatedAt(Instant.now());
     }
 
-    /** 禁用表单（active→disabled）。 */
+    /** 禁用表单（active→disabled；已 disabled 幂等 no-op）。 */
     public void disable() {
+        if (STATUS_DISABLED.equals(root.getStatus())) return;   // 幂等
+        if (!STATUS_ACTIVE.equals(root.getStatus())) {
+            throw BusinessException.invalidStateTransition(root.getStatus(), STATUS_DISABLED);
+        }
         root.setStatus(STATUS_DISABLED);
         root.setUpdatedAt(Instant.now());
     }
 
-    /** 启用表单（disabled→active）。 */
+    /** 启用表单（disabled→active；已 active 幂等 no-op）。 */
     public void enable() {
+        if (STATUS_ACTIVE.equals(root.getStatus())) return;   // 幂等
+        if (!STATUS_DISABLED.equals(root.getStatus())) {
+            throw BusinessException.invalidStateTransition(root.getStatus(), STATUS_ACTIVE);
+        }
         root.setStatus(STATUS_ACTIVE);
         root.setUpdatedAt(Instant.now());
     }

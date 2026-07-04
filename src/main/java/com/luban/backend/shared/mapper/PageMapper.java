@@ -27,7 +27,7 @@ public interface PageMapper {
             "VALUES (#{id}, #{siteId}, #{name}, #{path}, #{status}, #{schemaJson}, #{seoJson}, #{createdAt}, #{updatedAt})")
     int insert(Page page);
 
-    @Update("UPDATE pages SET name=#{name}, path=#{path}, status=#{status}, schema_json=#{schemaJson}, seo_json=#{seoJson}, updated_at=#{updatedAt} WHERE id=#{id} AND site_id=#{siteId}")
+    @Update("UPDATE pages SET name=#{name}, path=#{path}, status=#{status}, schema_json=#{schemaJson}, seo_json=#{seoJson}, published_at=#{publishedAt}, published_by=#{publishedBy}, updated_at=#{updatedAt} WHERE id=#{id} AND site_id=#{siteId}")
     int update(Page page);
 
     /** P0 发布闭环：更新发布状态（不改草稿内容）。 */

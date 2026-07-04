@@ -22,7 +22,7 @@ public class PagePublishSideEffectHandler {
 
     private static final Logger log = LoggerFactory.getLogger(PagePublishSideEffectHandler.class);
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(PagePublishedEvent event) {
         log.info("Page published side-effect: siteId={}, pageId={}, path={}",
@@ -30,7 +30,7 @@ public class PagePublishSideEffectHandler {
         // TODO(P1): 短链刷新 / SEO 缓存失效 / sitemap 更新
     }
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(PageUnpublishedEvent event) {
         log.info("Page unpublished side-effect: siteId={}, pageId={}",

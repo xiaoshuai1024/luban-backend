@@ -1,4 +1,5 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,7 +58,7 @@ public class DatasourceService {
     // SiteMapper 用于 SITE_NOT_FOUND 跨聚合校验（对齐 TemplateService 范式，
     // Site 是种子数据查询，非聚合根写不变量，保留在 Service 层）。
     private final SiteMapper siteMapper;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              SiteMapper siteMapper) {
@@ -210,7 +211,7 @@ public class DatasourceService {
     private String configToJson(JsonNode config, boolean strictOnFailure) {
         if (config == null) return "{}";
         try {
-            return objectMapper.writeValueAsString(config);
+            return JsonUtil.MAPPER.writeValueAsString(config);
         } catch (Exception e) {
             if (strictOnFailure) {
                 log.warn("config serialization rejected (isNull={}, isMissing={})", config.isNull(), config.isMissingNode());
@@ -224,7 +225,7 @@ public class DatasourceService {
     private JsonNode parseConfig(String raw) {
         if (raw == null || raw.isBlank()) return null;
         try {
-            return objectMapper.readTree(raw);
+            return JsonUtil.MAPPER.readTree(raw);
         } catch (Exception e) {
             return null;
         }

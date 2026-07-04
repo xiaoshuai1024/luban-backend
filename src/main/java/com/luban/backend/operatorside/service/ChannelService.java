@@ -1,7 +1,9 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.domain.CampaignAggregate;
+import com.luban.backend.shared.domain.ChannelDomain;
 import com.luban.backend.shared.dto.ChannelResponse;
 import com.luban.backend.shared.dto.ChannelSaveRequest;
 import com.luban.backend.shared.entity.Channel;
@@ -32,7 +34,7 @@ public class ChannelService {
 
     private static final Logger log = LoggerFactory.getLogger(ChannelService.class);
     private static final int CODE_GEN_MAX_RETRY = 3;
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    
 
     private final ChannelMapper channelMapper;
     private final SiteMapper siteMapper;
@@ -86,7 +88,7 @@ public class ChannelService {
 
         // 运营指定 code：单次尝试，DB 唯一约束冲突 → 409
         if (req.code() != null && !req.code().isBlank()) {
-            String code = CampaignAggregate.validateAndResolveCode(
+            String code = ChannelDomain.validateAndResolveCode(
                     req.siteId(), req.code(), req.targetPageId(), page.getSiteId());
             return insertChannel(req, code, utmJson);
         }
@@ -94,9 +96,9 @@ public class ChannelService {
         // 注意：必须直接调 channelMapper.insert（绕过 insertChannel 的 DIVE→409 转换），
         // 否则异常类型被改写，外层 catch(DataIntegrityViolationException) 匹配不到 → 死代码。
         for (int i = 0; i < CODE_GEN_MAX_RETRY; i++) {
-            String code = CampaignAggregate.validateAndResolveCode(
+            String code = ChannelDomain.validateAndResolveCode(
                     req.siteId(), null, req.targetPageId(), page.getSiteId());
-            Channel ch = CampaignAggregate.newChannel(
+            Channel ch = ChannelDomain.newChannel(
                     req.siteId(), req.campaignId(), code, req.type(), utmJson, req.targetPageId());
             ch.setCreatedAt(Instant.now());
             ch.setUpdatedAt(Instant.now());
@@ -111,7 +113,7 @@ public class ChannelService {
     }
 
     private ChannelResponse insertChannel(ChannelSaveRequest req, String code, String utmJson) {
-        Channel ch = CampaignAggregate.newChannel(
+        Channel ch = ChannelDomain.newChannel(
                 req.siteId(), req.campaignId(), code, req.type(), utmJson, req.targetPageId());
         ch.setCreatedAt(Instant.now());
         ch.setUpdatedAt(Instant.now());
@@ -153,7 +155,7 @@ public class ChannelService {
         if (req.campaignId() != null) existing.setCampaignId(req.campaignId());
         // 状态转换（经聚合根状态机）
         if (req.status() != null && !req.status().equals(existing.getStatus())) {
-            CampaignAggregate.transitionChannel(existing, req.status());
+            ChannelDomain.transitionChannel(existing, req.status());
         }
         existing.setUpdatedAt(Instant.now());
         channelMapper.update(existing);
@@ -171,7 +173,7 @@ public class ChannelService {
     private String toJson(com.fasterxml.jackson.databind.JsonNode node) {
         if (node == null) return null;
         try {
-            return MAPPER.writeValueAsString(node);
+            return JsonUtil.MAPPER.writeValueAsString(node);
         } catch (Exception e) {
             throw BusinessException.invalidArgument("utmTemplate 序列化失败");
         }

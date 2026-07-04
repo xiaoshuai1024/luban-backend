@@ -62,6 +62,10 @@ public class TrialService {
     private void downgrade(String userId) {
         SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
         if (agg == null) {
+            // 数据不一致：trial 已过期但无订阅聚合记录（历史脏数据/外部写入）。
+            // 补偿性修复：经 Repository 兜底标记 trial_converted，并 WARN 记录便于排查。
+            // 不绕过聚合根创建新订阅——那需要用户主动 subscribe，不能由定时任务代发。
+            log.warn("Trial downgrade: 订阅聚合缺失，补偿标记 trial_converted userId={}", userId);
             subscriptionRepository.markTrialConverted(userId, "free");
             return;
         }

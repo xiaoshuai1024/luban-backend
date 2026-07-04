@@ -119,8 +119,14 @@ public final class PageAggregate {
             throw BusinessException.invalidStateTransition(root.getStatus(), STATUS_ARCHIVED);
         }
         Instant now = Instant.now();
+        // G1 修复 S3：published→archived 与 unpublish() 语义相同（下线），
+        // 一致发 PageUnpublishedEvent（让 PageService/Projection 清理 published_pages 快照）。
+        boolean wasPublished = STATUS_PUBLISHED.equals(root.getStatus());
         root.setStatus(STATUS_ARCHIVED);
         root.setUpdatedAt(now);
+        if (wasPublished) {
+            events.add(new PageUnpublishedEvent(root.getId(), root.getSiteId(), now));
+        }
     }
 
     /**

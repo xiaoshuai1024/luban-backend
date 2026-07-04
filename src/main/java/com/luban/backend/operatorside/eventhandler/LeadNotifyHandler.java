@@ -35,7 +35,7 @@ public class LeadNotifyHandler {
         this.formMapper = formMapper;
     }
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(LeadSubmittedEvent event) {
         // 事件携带 siteId（LeadSubmittedEvent 含 siteId 字段），按 (id, siteId) 精确加载，

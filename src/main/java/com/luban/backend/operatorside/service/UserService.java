@@ -29,6 +29,8 @@ import java.util.stream.Collectors;
 @Service
 public class UserService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(UserService.class);
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -51,7 +53,7 @@ public class UserService {
 
     public UserResponse get(String id) {
         UserAggregate agg = userRepository.findById(id);
-        if (agg == null) throw BusinessException.userNotFound();
+        if (agg == null) { log.warn("用户不存在 userId（疑似越权或脏数据）"); throw BusinessException.userNotFound(); }
         return UserResponse.fromEntity(agg.toEntity());
     }
 
@@ -73,7 +75,7 @@ public class UserService {
 
     public UserResponse update(String id, String username, String name, String role, String status, String password) {
         UserAggregate agg = userRepository.findById(id);
-        if (agg == null) throw BusinessException.userNotFound();
+        if (agg == null) { log.warn("用户不存在 userId（疑似越权或脏数据）"); throw BusinessException.userNotFound(); }
         agg.updateProfile(username, name, role);
         if (status != null) {
             applyStatus(agg, status);
@@ -95,7 +97,7 @@ public class UserService {
 
     public UserResponse updateStatus(String id, String status) {
         UserAggregate agg = userRepository.findById(id);
-        if (agg == null) throw BusinessException.userNotFound();
+        if (agg == null) { log.warn("用户不存在 userId（疑似越权或脏数据）"); throw BusinessException.userNotFound(); }
         applyStatus(agg, status);
         userRepository.updateStatus(agg);
         return UserResponse.fromEntity(agg.toEntity());
@@ -107,9 +109,10 @@ public class UserService {
             agg.disable();
         } else if ("active".equalsIgnoreCase(status)) {
             agg.enable();
+        } else {
+            // G1 修复 N5：未知状态值 WARN 记录（向后兼容不抛异常，但留审计痕迹便于排查脏数据）
+            log.warn("未知用户状态值被忽略 userId={} status={}", agg.toEntity().getId(), status);
         }
-        // 其它值：聚合根不感知非法状态（保留原行为——原 update 直接 setStatus 不校验白名单，
-        // 但聚合根范式下白名单由聚合根守护；这里忽略未知值以保持向后兼容，避免破坏现有契约测试）。
     }
 
     /**

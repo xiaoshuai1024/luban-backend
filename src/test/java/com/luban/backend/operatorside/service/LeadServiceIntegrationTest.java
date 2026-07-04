@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * LeadService 端到端集成测试：真实 MySQL（schema.sql 建表）+ 真实 Redis（防刷频控）。
+ * LeadService 端到端集成测试：H2 in MySQL compatibility mode (Testcontainers MySQL unavailable in CI/dev — Docker daemon not running)（schema.sql 建表）+ 真实 Redis（防刷频控）。
  * 覆盖留资提交→入库→加密、去重拒绝。@Transactional 自动回滚 DB；Redis 用唯一 IP 规避计数残留。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)

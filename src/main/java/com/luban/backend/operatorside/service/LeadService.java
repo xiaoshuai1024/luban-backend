@@ -1,4 +1,5 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 import com.luban.backend.shared.crypto.LeadCryptoService;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
@@ -16,9 +17,11 @@ import com.luban.backend.shared.entity.LeadAuditLog;
 import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.mapper.FormMapper;
 import com.luban.backend.shared.mapper.LeadAuditLogMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.repository.LeadRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,13 +43,15 @@ import java.util.UUID;
 @Service
 public class LeadService implements LeadSubmissionPort {
 
+    private static final Logger log = LoggerFactory.getLogger(LeadService.class);
+
     /** P0 防刷默认值（P1 从 form.antiSpamJson 解析）。 */
     static final int DEFAULT_RATE_MAX = 5;
     static final int DEFAULT_RATE_WINDOW_SEC = 60;
     private static final List<String> DEFAULT_DEDUP_KEYS = List.of("phone");
 
     private final FormMapper formMapper;
-    private final LeadMapper leadMapper;
+    private final LeadRepository leadRepository;
     private final SiteMapper siteMapper;
     private final LeadAuditLogMapper leadAuditMapper;
     private final TenantGuardService tenantGuard;
@@ -56,15 +61,15 @@ public class LeadService implements LeadSubmissionPort {
     private final QuotaService quotaService;
     private final UserSiteMapper userSiteMapper;
     private final ApplicationEventPublisher eventPublisher;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    
 
-    public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
+    public LeadService(FormMapper formMapper, LeadRepository leadRepository, SiteMapper siteMapper,
                        LeadAuditLogMapper leadAuditMapper, TenantGuardService tenantGuard,
                        DedupService dedupService, AntiSpamService antiSpamService,
                        LeadCryptoService cryptoService, QuotaService quotaService,
                        UserSiteMapper userSiteMapper, ApplicationEventPublisher eventPublisher) {
         this.formMapper = formMapper;
-        this.leadMapper = leadMapper;
+        this.leadRepository = leadRepository;
         this.siteMapper = siteMapper;
         this.leadAuditMapper = leadAuditMapper;
         this.tenantGuard = tenantGuard;
@@ -87,9 +92,11 @@ public class LeadService implements LeadSubmissionPort {
     public LeadSubmitResult submit(LeadSubmitRequest req) {
         Form form = formMapper.getById(req.formId());
         if (form == null) {
+            log.warn("留资提交拒绝：表单不存在 formId={}", req.formId());
             throw BusinessException.formNotFound();
         }
         if (!"active".equals(form.getStatus())) {
+            log.warn("留资提交拒绝：表单未启用 formId={} status={}", req.formId(), form.getStatus());
             throw BusinessException.leadDisabled();
         }
 
@@ -97,22 +104,25 @@ public class LeadService implements LeadSubmissionPort {
         boolean captchaRequired = parseCaptchaRequired(form);
         if (captchaRequired) {
             if (!antiSpamService.verifyCaptcha(req.captchaToken())) {
+                log.warn("留资提交拒绝：验证码错误 formId={} ip={}", req.formId(), req.ip());
                 throw BusinessException.captchaInvalid();
             }
         }
 
         // 1. 防刷（IP + form 维度）
         if (antiSpamService.isRateLimited(req.ip(), req.formId(), DEFAULT_RATE_MAX, DEFAULT_RATE_WINDOW_SEC)) {
+            log.warn("留资提交拒绝：触发防刷限流 formId={} ip={}", req.formId(), req.ip());
             throw BusinessException.leadSpamBlocked();
         }
 
         // 2. 去重
         List<String> dedupKeys = parseDedupKeys(form);
         String hash = dedupService.computeHash(req.formId(), req.contact(), dedupKeys);
-        int exists = leadMapper.countByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+        int exists = leadRepository.countByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
         DedupService.Policy policy = parsePolicy(form);
         DedupService.Decision decision = dedupService.decide(exists > 0, policy);
         if (decision == DedupService.Decision.REJECT) {
+            log.warn("留资提交拒绝：命中去重 REJECT 策略 formId={} hash={}", req.formId(), hash);
             throw BusinessException.leadDuplicate();
         }
 
@@ -120,14 +130,14 @@ public class LeadService implements LeadSubmissionPort {
         boolean dedupHit = exists > 0;
         if (dedupHit) {
             if (policy == DedupService.Policy.OVERWRITE) {
-                leadMapper.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+                leadRepository.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
             } else if (policy == DedupService.Policy.MERGE) {
-                Lead existing = leadMapper.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+                Lead existing = leadRepository.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
                 if (existing != null) {
                     Map<String, String> mergedContact = new LinkedHashMap<>(decryptContact(existing));
                     mergedContact.putAll(req.contact());
                     String mergedUtm = mergeUtm(existing.getUtmJson(), req.utm());
-                    leadMapper.updateContact(existing.getId(), existing.getSiteId(),
+                    leadRepository.updateContact(existing.getId(), existing.getSiteId(),
                             cryptoService.encrypt(toJson(mergedContact)), mergedUtm, Instant.now());
                     // 通知：发布 LeadSubmittedEvent（LeadNotifyHandler AFTER_COMMIT 消费，替代旧 afterCommit 钩子）
                     publishLeadSubmitted(existing.getId(), form);
@@ -136,26 +146,26 @@ public class LeadService implements LeadSubmissionPort {
             }
         }
 
-        // 3. 加密 contact + 构建 lead
+        // 3. 加密 contact + 经聚合根工厂构建 lead（统一入口，禁止 Service 直接 new Lead()）
         String encryptedContact = cryptoService.encrypt(toJson(req.contact()));
-        Lead lead = new Lead();
-        lead.setId(UUID.randomUUID().toString());
-        lead.setSiteId(form.getSiteId());
-        lead.setFormId(form.getId());
-        lead.setPageId(req.pageId() != null ? req.pageId() : form.getPageId());
-        lead.setContactJson(encryptedContact);
-        lead.setUtmJson(toJson(req.utm()));
-        lead.setStatus(decision == DedupService.Decision.MARK_DUPLICATE
-                ? LeadAggregate.Status.INVALID.name().toLowerCase()
-                : LeadAggregate.Status.NEW.name().toLowerCase());
-        lead.setDedupHash(hash);
-        lead.setSourceIp(req.ip());
-        lead.setVisitorId(req.visitorId());
-        Instant now = Instant.now();
-        lead.setCreatedAt(now);
-        lead.setUpdatedAt(now);
+        LeadAggregate.Status initialStatus = decision == DedupService.Decision.MARK_DUPLICATE
+                ? LeadAggregate.Status.INVALID
+                : LeadAggregate.Status.NEW;
+        LeadAggregate aggregate = LeadAggregate.newLead(
+                UUID.randomUUID().toString(),
+                form.getSiteId(),
+                form.getId(),
+                req.pageId() != null ? req.pageId() : form.getPageId(),
+                encryptedContact,
+                toJson(req.utm()),
+                hash,
+                req.ip(),
+                req.visitorId(),
+                initialStatus);
+        Lead lead = aggregate.toLead();
         try {
-            leadMapper.insert(lead);
+            // 经聚合根 → Repository.save（save 内部调 insert）
+            leadRepository.save(aggregate);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // OVERWRITE 并发竞争：降级为重复标记
             lead.setStatus(LeadAggregate.Status.INVALID.name().toLowerCase());
@@ -190,7 +200,7 @@ public class LeadService implements LeadSubmissionPort {
         Map<String, String> merged = new LinkedHashMap<>();
         if (oldUtmJson != null && !oldUtmJson.isBlank()) {
             try {
-                merged.putAll(objectMapper.readValue(oldUtmJson, Map.class));
+                merged.putAll(JsonUtil.MAPPER.readValue(oldUtmJson, Map.class));
             } catch (Exception ignored) { }
         }
         if (newUtm != null) merged.putAll(newUtm);
@@ -206,8 +216,8 @@ public class LeadService implements LeadSubmissionPort {
             return listWithKeyword(siteId, status, formId, assigneeId, keyword.trim(), page, size);
         }
         int offset = Math.max(0, (page - 1) * size);
-        List<Lead> leads = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
-        int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
+        List<Lead> leads = leadRepository.listByQuery(siteId, status, formId, assigneeId, offset, size);
+        int total = leadRepository.countByQuery(siteId, status, formId, assigneeId);
         List<LeadResponse> respList = leads.stream().map(this::toResponse).toList();
         return Map.of("list", respList, "total", total, "page", page, "pageSize", size);
     }
@@ -220,7 +230,7 @@ public class LeadService implements LeadSubmissionPort {
     private Map<String, Object> listWithKeyword(String siteId, String status, String formId, String assigneeId,
                                                 String keyword, int page, int size) {
         int scanLimit = 500; // 单次最多扫描 500 条，避免全表解密
-        List<Lead> all = leadMapper.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
+        List<Lead> all = leadRepository.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
         boolean truncated = all.size() >= scanLimit;
         String kw = keyword.toLowerCase();
         List<LeadResponse> matched = all.stream()
@@ -267,7 +277,7 @@ public class LeadService implements LeadSubmissionPort {
         LeadAggregate agg = LeadAggregate.reconstitute(lead);
         agg.transit(toStatusRaw, actorId);
         Lead updated = agg.toLead();
-        leadMapper.updateStatus(leadId, siteId, updated.getStatus(), updated.getAssigneeId(),
+        leadRepository.updateStatus(leadId, siteId, updated.getStatus(), updated.getAssigneeId(),
                 updated.getConvertedAt(), updated.getUpdatedAt());
         // 发布聚合根事件（LeadConvertedEvent → Analytics 归因）
         agg.pullEvents().forEach(eventPublisher::publishEvent);
@@ -291,9 +301,9 @@ public class LeadService implements LeadSubmissionPort {
                 || (formId != null && !formId.isBlank())
                 || (assigneeId != null && !assigneeId.isBlank());
         if (hasFilter) {
-            leads = leadMapper.listForExport(siteId, status, formId, assigneeId);
+            leads = leadRepository.listForExport(siteId, status, formId, assigneeId);
         } else {
-            leads = leadMapper.listAllForExport(siteId);
+            leads = leadRepository.listAllForExport(siteId);
         }
         StringBuilder sb = new StringBuilder();
         sb.append("phone,email,name,status,created_at\n");
@@ -309,7 +319,9 @@ public class LeadService implements LeadSubmissionPort {
     }
 
     private Lead getOrThrow(String siteId, String leadId) {
-        Lead lead = leadMapper.getByIdAndSiteId(leadId, siteId);
+        Lead lead = leadRepository.findById(leadId, siteId)
+                .map(LeadAggregate::toLead)
+                .orElse(null);
         if (lead == null) throw BusinessException.leadNotFound();
         return lead;
     }
@@ -336,7 +348,7 @@ public class LeadService implements LeadSubmissionPort {
         Map<String, String> utm = null;
         if (lead.getUtmJson() != null && !lead.getUtmJson().isBlank()) {
             try {
-                utm = objectMapper.readValue(lead.getUtmJson(), Map.class);
+                utm = JsonUtil.MAPPER.readValue(lead.getUtmJson(), Map.class);
             } catch (Exception ignored) {
             }
         }
@@ -355,7 +367,7 @@ public class LeadService implements LeadSubmissionPort {
         if (lead.getContactJson() == null || lead.getContactJson().isBlank()) return Map.of();
         try {
             String plain = cryptoService.decrypt(lead.getContactJson());
-            return objectMapper.readValue(plain, Map.class);
+            return JsonUtil.MAPPER.readValue(plain, Map.class);
         } catch (Exception e) {
             return Map.of();
         }
@@ -366,7 +378,7 @@ public class LeadService implements LeadSubmissionPort {
             return DEFAULT_DEDUP_KEYS;
         }
         try {
-            List<String> keys = objectMapper.readValue(form.getDedupKeysJson(), List.class);
+            List<String> keys = JsonUtil.MAPPER.readValue(form.getDedupKeysJson(), List.class);
             return keys.isEmpty() ? DEFAULT_DEDUP_KEYS : keys;
         } catch (Exception e) {
             return DEFAULT_DEDUP_KEYS;
@@ -389,7 +401,7 @@ public class LeadService implements LeadSubmissionPort {
     private boolean parseCaptchaRequired(Form form) {
         if (form.getAntiSpamJson() == null || form.getAntiSpamJson().isBlank()) return false;
         try {
-            Map<String, Object> cfg = objectMapper.readValue(form.getAntiSpamJson(), Map.class);
+            Map<String, Object> cfg = JsonUtil.MAPPER.readValue(form.getAntiSpamJson(), Map.class);
             Object v = cfg.get("captchaRequired");
             return Boolean.TRUE.equals(v);
         } catch (Exception e) {
@@ -413,7 +425,7 @@ public class LeadService implements LeadSubmissionPort {
     private String toJson(Object obj) {
         if (obj == null) return null;
         try {
-            return objectMapper.writeValueAsString(obj);
+            return JsonUtil.MAPPER.writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException("JSON 序列化失败", e);
         }

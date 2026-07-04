@@ -1,4 +1,5 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,9 +29,11 @@ import java.util.stream.Collectors;
 @Service
 public class FormService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(FormService.class);
+
     private final FormRepository formRepository;
     private final SiteMapper siteMapper;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    
 
     public FormService(FormRepository formRepository, SiteMapper siteMapper) {
         this.formRepository = formRepository;
@@ -38,7 +41,7 @@ public class FormService {
     }
 
     public List<FormResponse> list(String siteId) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (siteMapper.getById(siteId) == null) { log.warn("站点不存在 siteId={}（疑似越权）", siteId); throw BusinessException.siteNotFound(); }
         return formRepository.listBySiteId(siteId).stream()
                 .map(FormResponse::fromEntity).collect(Collectors.toList());
     }
@@ -51,7 +54,10 @@ public class FormService {
 
     @Transactional(rollbackFor = Exception.class)
     public FormResponse create(FormSaveRequest req) {
-        if (siteMapper.getById(req.siteId()) == null) throw BusinessException.siteNotFound();
+        if (siteMapper.getById(req.siteId()) == null) {
+            log.warn("站点不存在 siteId={}（疑似越权）", req.siteId());
+            throw BusinessException.siteNotFound();
+        }
         FormAggregate agg = FormAggregate.newForm(
                 UUID.randomUUID().toString(), req.siteId(), req.pageId(), req.name(),
                 toJson(req.fieldSchema()),
@@ -93,7 +99,7 @@ public class FormService {
     private String toJson(JsonNode node) {
         if (node == null) return null;
         try {
-            return objectMapper.writeValueAsString(node);
+            return JsonUtil.MAPPER.writeValueAsString(node);
         } catch (Exception e) {
             throw new IllegalStateException("JSON 序列化失败", e);
         }

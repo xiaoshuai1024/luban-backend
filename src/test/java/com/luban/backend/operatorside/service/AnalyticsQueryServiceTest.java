@@ -133,4 +133,131 @@ class AnalyticsQueryServiceTest {
         List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("rows");
         assertThat(rows).isEmpty();
     }
+
+    // ===== getTrend（metric 4 分支 + 空数据 + 多日合并）=====
+
+    @Test
+    void getTrend_views_metric() {
+        AnalyticsDaily d1 = daily("p1", 100, 10, 5);
+        d1.setDate(LocalDate.of(2026, 1, 1));
+        AnalyticsDaily d2 = daily("p2", 200, 20, 8);
+        d2.setDate(LocalDate.of(2026, 1, 2));
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+                .thenReturn(List.of(d1, d2));
+
+        Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
+
+        assertThat(result).containsKey("points");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+        assertThat(points).hasSize(2);
+        assertThat(points.get(0)).containsEntry("date", "2026-01-01").containsEntry("value", 100L);
+        assertThat(points.get(1)).containsEntry("date", "2026-01-02").containsEntry("value", 200L);
+    }
+
+    @Test
+    void getTrend_submissions_metric() {
+        AnalyticsDaily d = daily("p1", 100, 10, 5);
+        d.setDate(LocalDate.of(2026, 1, 1));
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+
+        Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "submissions");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+        assertThat(points).hasSize(1);
+        assertThat(points.get(0)).containsEntry("date", "2026-01-01").containsEntry("value", 5L);
+    }
+
+    @Test
+    void getTrend_conversions_metric() {
+        AnalyticsDaily d = daily("p1", 100, 10, 5);
+        d.setDate(LocalDate.of(2026, 1, 1));
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+
+        Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "conversions");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+        assertThat(points).hasSize(1);
+        assertThat(points.get(0)).containsEntry("date", "2026-01-01").containsEntry("value", 10L);
+    }
+
+    @Test
+    void getTrend_default_metric_for_null_and_unknown() {
+        // metric=null 与未知值都走 default 分支（views）
+        AnalyticsDaily d = daily("p1", 100, 10, 5);
+        d.setDate(LocalDate.of(2026, 1, 1));
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+
+        Map<String, Object> resultNull = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), null);
+        Map<String, Object> resultUnknown = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "unknown");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> pointsNull = (List<Map<String, Object>>) resultNull.get("points");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> pointsUnknown = (List<Map<String, Object>>) resultUnknown.get("points");
+        assertThat(pointsNull.get(0)).containsEntry("value", 100L);
+        assertThat(pointsUnknown.get(0)).containsEntry("value", 100L);
+    }
+
+    @Test
+    void getTrend_empty_data_returns_empty_points() {
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of());
+
+        Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+        assertThat(points).isEmpty();
+    }
+
+    @Test
+    void getTrend_multi_day_merge_sums_same_date() {
+        // 同日多条记录按日期合并（TreeMap merge + Long::sum）
+        AnalyticsDaily d1 = daily("p1", 100, 10, 5);
+        d1.setDate(LocalDate.of(2026, 1, 1));
+        AnalyticsDaily d2 = daily("p2", 150, 4, 7);
+        d2.setDate(LocalDate.of(2026, 1, 1));
+        AnalyticsDaily d3 = daily("p3", 50, 2, 1);
+        d3.setDate(LocalDate.of(2026, 1, 2));
+        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+                .thenReturn(List.of(d1, d2, d3));
+
+        Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+        // 合并后：2026-01-01 = 100+150 = 250, 2026-01-02 = 50；TreeMap 按日期升序
+        assertThat(points).hasSize(2);
+        assertThat(points.get(0)).containsEntry("date", "2026-01-01").containsEntry("value", 250L);
+        assertThat(points.get(1)).containsEntry("date", "2026-01-02").containsEntry("value", 50L);
+    }
+
+    @Test
+    void getAttribution_parse_failure_groups_into_failure_bucket() {
+        // 非法 UTM JSON 进入 catch 分支，归入"解析失败|无|无"分组
+        Lead badJson = new Lead();
+        badJson.setStatus("new");
+        badJson.setUtmJson("not-a-json");
+        Lead valid = new Lead();
+        valid.setStatus("converted");
+        valid.setUtmJson("{\"source\":\"wechat\",\"medium\":\"social\",\"campaign\":\"c1\"}");
+        when(leadMapper.listForExport("site-1", null, null, null))
+                .thenReturn(List.of(badJson, valid));
+
+        Map<String, Object> result = service.getAttribution("site-1", LocalDate.now(), LocalDate.now());
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("rows");
+        assertThat(rows.size()).isGreaterThanOrEqualTo(2);
+        Map<String, Object> failRow = rows.stream()
+                .filter(r -> "解析失败".equals(r.get("source")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing 解析失败 row"));
+        assertThat(failRow).containsEntry("source", "解析失败")
+                .containsEntry("medium", "无")
+                .containsEntry("campaign", "无")
+                .containsEntry("leads", 1L);
+    }
 }

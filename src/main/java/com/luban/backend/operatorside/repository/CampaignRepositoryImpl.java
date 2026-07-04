@@ -45,6 +45,7 @@ public class CampaignRepositoryImpl implements CampaignRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(CampaignAggregate aggregate) {
         Campaign entity = aggregate.toCampaign();
         if (campaignMapper.getById(entity.getId()) == null) {

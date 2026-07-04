@@ -43,6 +43,7 @@ public class FormRepositoryImpl implements FormRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(FormAggregate aggregate) {
         Form entity = aggregate.toEntity();
         if (formMapper.getById(entity.getId()) == null) {

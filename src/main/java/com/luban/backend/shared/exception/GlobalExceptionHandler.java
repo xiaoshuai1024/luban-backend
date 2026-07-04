@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<APIError> handleBusiness(BusinessException ex) {
         return ResponseEntity
-                .status(ex.getHttpStatus())
+                .status(ex.getStatusCode())
                 .body(new APIError(ex.getCode(), ex.getMessage(), ex.getDetails()));
     }
 
@@ -38,7 +38,6 @@ public class GlobalExceptionHandler {
     }
 
     /**
-    /**
      * Malformed / unreadable JSON body (e.g. truncated payload, invalid JSON syntax).
      * Aligned with the Go backend's {@code ShouldBindJSON} failure path → 400
      * INVALID_ARGUMENT (plan §9.2). Without this handler Spring would fall through to
@@ -46,7 +45,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<APIError> handleUnreadable(HttpMessageNotReadableException ex) {
-        String msg = ex.getMessage() != null && ex.getMessage().contains("required")
+        // 大小写不敏感匹配 Spring 的 "Required request body..."（修复 🔴 原大小写敏感漏判）
+        String msg = ex.getMessage() != null && ex.getMessage().toLowerCase().contains("required")
                 ? "request body is required"
                 : "malformed JSON body";
         return ResponseEntity

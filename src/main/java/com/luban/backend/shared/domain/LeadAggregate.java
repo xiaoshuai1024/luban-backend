@@ -4,7 +4,6 @@ import com.luban.backend.shared.domain.event.DomainEvent;
 import com.luban.backend.shared.domain.event.LeadConvertedEvent;
 import com.luban.backend.shared.entity.Lead;
 import com.luban.backend.shared.exception.BusinessException;
-import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -67,6 +66,43 @@ public final class LeadAggregate {
     }
 
     /**
+     * 工厂：从留资提交创建新线索（status = initialStatus，默认 NEW）。
+     *
+     * <p>聚合根统一入口，避免 Service 直接 new Lead() 绕过不变量。所有"首次创建"路径
+     * 必须经此方法；持久化后字段（id/createdAt/updatedAt）在此一次性填充。
+     *
+     * @param id            UUID（由 Service 生成）
+     * @param siteId        站点 id
+     * @param formId        表单 id
+     * @param pageId        落地页 id（可 null，回退表单绑定页）
+     * @param contactJson   AES 加密后的联系人 JSON（Service 已加密）
+     * @param utmJson       UTM 来源 JSON
+     * @param dedupHash     去重哈希（Service 已计算）
+     * @param sourceIp      来源 IP
+     * @param visitorId     访客 id
+     * @param initialStatus 初始状态（通常 NEW；MARK_DUPLICATE 策略下为 INVALID）
+     */
+    public static LeadAggregate newLead(String id, String siteId, String formId, String pageId,
+            String contactJson, String utmJson, String dedupHash, String sourceIp, String visitorId,
+            Status initialStatus) {
+        Instant now = Instant.now();
+        Lead lead = new Lead();
+        lead.setId(id);
+        lead.setSiteId(siteId);
+        lead.setFormId(formId);
+        lead.setPageId(pageId);
+        lead.setContactJson(contactJson);
+        lead.setUtmJson(utmJson);
+        lead.setStatus(initialStatus.name().toLowerCase());
+        lead.setDedupHash(dedupHash);
+        lead.setSourceIp(sourceIp);
+        lead.setVisitorId(visitorId);
+        lead.setCreatedAt(now);
+        lead.setUpdatedAt(now);
+        return new LeadAggregate(lead);
+    }
+
+    /**
      * 状态转换（聚合根状态机 + 副作用 + 事件）。
      *
      * @param toStatusRaw 目标状态（字符串，大小写不敏感）
@@ -79,8 +115,7 @@ public final class LeadAggregate {
             return;   // 同状态幂等放行
         }
         if (!canTransitEnum(from, to)) {
-            throw new BusinessException(HttpStatus.CONFLICT, "LEAD_INVALID_TRANSITION",
-                    "非法状态转移: " + from + " -> " + to);
+            throw BusinessException.leadInvalidTransition(from.name(), to.name());
         }
         Instant now = Instant.now();
         // 副作用：CONVERTED 设 convertedAt；ASSIGNED 设 assigneeId
@@ -104,13 +139,22 @@ public final class LeadAggregate {
         return drained;
     }
 
-    // ===== 无状态静态工具（状态机 + 解析，从 LeadStatusMachine 迁移） =====
+    // ===== 包内可见的状态机工具（仅测试与同包聚合根使用；禁止 Service 直接调用以绕过聚合根） =====
 
-    /** 当前状态是否可转移到目标状态（字符串重载，大小写不敏感）。 */
-    public static boolean canTransit(String fromRaw, String toRaw) {
+    /** 当前状态是否可转移到目标状态（字符串重载，大小写不敏感）。包内可见：测试用。 */
+    static boolean canTransit(String fromRaw, String toRaw) {
         Status from = tryParse(fromRaw);
         Status to = tryParse(toRaw);
         if (from == null || to == null) return false;
+        return canTransitEnum(from, to);
+    }
+
+    /**
+     * 当前聚合根状态是否可转移到目标（实例重载，对外推荐入口；读取 {@code root.getStatus()}，
+     * 调用方无需自行解析）。聚合根实例方法是 DDD 推荐形式，避免静态工具式"外部 check 再 mutate"反模式。
+     */
+    public boolean canTransit(Status to) {
+        Status from = parseStatusEnum(root.getStatus());
         return canTransitEnum(from, to);
     }
 
@@ -120,8 +164,8 @@ public final class LeadAggregate {
         return TRANSITIONS.getOrDefault(from, EnumSet.noneOf(Status.class)).contains(to);
     }
 
-    /** 字符串状态 → lowercase 规范值；非法抛 LEAD_INVALID_STATUS。null→"new"。 */
-    public static String parseStatus(String raw) {
+    /** 字符串状态 → lowercase 规范值；非法抛 LEAD_INVALID_STATUS。null→"new"。包内可见：测试用。 */
+    static String parseStatus(String raw) {
         return parseStatusEnum(raw).name().toLowerCase();
     }
 
@@ -130,8 +174,7 @@ public final class LeadAggregate {
         try {
             return Status.valueOf(raw.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "LEAD_INVALID_STATUS",
-                    "未知线索状态: " + raw);
+            throw BusinessException.leadInvalidStatus(raw);
         }
     }
 

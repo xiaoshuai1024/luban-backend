@@ -1,15 +1,14 @@
 package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.auth.UserContext;
+import com.luban.backend.shared.domain.TemplateAggregate;
 import com.luban.backend.shared.dto.TemplateInstallRequest;
 import com.luban.backend.shared.dto.TemplateResponse;
 import com.luban.backend.shared.dto.TemplateSaveRequest;
 import com.luban.backend.shared.entity.Template;
 import com.luban.backend.shared.entity.TemplateVersion;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.TemplateInstallationMapper;
-import com.luban.backend.shared.mapper.TemplateMapper;
-import com.luban.backend.shared.mapper.TemplateVersionMapper;
+import com.luban.backend.shared.repository.TemplateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,11 +18,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,22 +31,20 @@ import static org.mockito.Mockito.when;
  * TemplateService 单测（backend-ddd-refactor plan v2 T18，补覆盖率）。
  *
  * <p>覆盖 create/update/delete/publish/archive/feature/install/get/list/getSchema。
- * TemplateService 现在用 TemplateAggregate 实例方法（newTemplate/reconstitute/publish 等）+ 发事件。
+ * v2：TemplateService 注入 {@link TemplateRepository}（零领域 Mapper 依赖），
+ * TemplateAggregate 实例方法（newTemplate/reconstitute/publish 等）+ 发事件。
  */
 @ExtendWith(MockitoExtension.class)
 class TemplateServiceTest {
 
-    @Mock private TemplateMapper templateMapper;
-    @Mock private TemplateVersionMapper versionMapper;
-    @Mock private TemplateInstallationMapper installationMapper;
+    @Mock private TemplateRepository templateRepository;
     @Mock private ApplicationEventPublisher eventPublisher;
 
     private TemplateService service;
 
     @BeforeEach
     void setUp() {
-        service = new TemplateService(templateMapper, versionMapper, installationMapper,
-                new ObjectMapper(), eventPublisher);
+        service = new TemplateService(templateRepository, new ObjectMapper(), eventPublisher);
     }
 
     private TemplateSaveRequest saveReq() {
@@ -66,11 +63,15 @@ class TemplateServiceTest {
         return t;
     }
 
+    private TemplateAggregate aggOf(Template t) {
+        return TemplateAggregate.reconstitute(t);
+    }
+
     @Test
     void get_returns_template() {
         Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(5);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(t)));
+        when(templateRepository.countInstallations("t-1")).thenReturn(5);
 
         TemplateResponse resp = service.get("t-1");
 
@@ -80,7 +81,7 @@ class TemplateServiceTest {
 
     @Test
     void get_throws_when_not_found() {
-        when(templateMapper.getById("t-x")).thenReturn(null);
+        when(templateRepository.findById("t-x")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.get("t-x"))
                 .isInstanceOf(BusinessException.class)
@@ -90,8 +91,8 @@ class TemplateServiceTest {
     @Test
     void list_returns_all() {
         Template t = publishedTemplate();
-        when(templateMapper.listAll()).thenReturn(List.of(t));
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(templateRepository.listAll()).thenReturn(List.of(t));
+        when(templateRepository.countInstallations("t-1")).thenReturn(0);
 
         List<TemplateResponse> out = service.list();
 
@@ -100,11 +101,10 @@ class TemplateServiceTest {
 
     @Test
     void getSchema_returns_latest_version_schema() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
         TemplateVersion v = new TemplateVersion();
         v.setSchemaJson("{\"x\":1}");
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(v);
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(v);
 
         String schema = service.getSchema("t-1");
 
@@ -113,9 +113,8 @@ class TemplateServiceTest {
 
     @Test
     void getSchema_throws_when_no_version() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(null);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(null);
 
         assertThatThrownBy(() -> service.getSchema("t-1"))
                 .isInstanceOf(BusinessException.class)
@@ -124,29 +123,29 @@ class TemplateServiceTest {
 
     @Test
     void create_inserts_template_and_initial_version() {
-        when(templateMapper.countBySlug("saas-landing")).thenReturn(0);
+        when(templateRepository.countBySlug("saas-landing")).thenReturn(0);
 
         TemplateResponse resp = service.create(saveReq());
 
         assertThat(resp.slug()).isEqualTo("saas-landing");
         assertThat(resp.status()).isEqualTo("draft");
-        verify(templateMapper).insert(any());
-        verify(versionMapper).insert(any());   // 初始版本 v1
+        // save 处理 insert + 初始版本 v1（pendingNewVersion）
+        verify(templateRepository).save(any());
     }
 
     @Test
     void create_throws_slug_conflict() {
-        when(templateMapper.countBySlug("saas-landing")).thenReturn(1);
+        when(templateRepository.countBySlug("saas-landing")).thenReturn(1);
 
         assertThatThrownBy(() -> service.create(saveReq()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("TEMPLATE_SLUG_CONFLICT");
-        verify(templateMapper, never()).insert(any());
+        verify(templateRepository, never()).save(any());
     }
 
     @Test
     void create_throws_when_schema_blank() {
-        when(templateMapper.countBySlug("slug")).thenReturn(0);
+        when(templateRepository.countBySlug("slug")).thenReturn(0);
         TemplateSaveRequest req = new TemplateSaveRequest("slug", "n", "saas", null, null, "  ", null);
 
         assertThatThrownBy(() -> service.create(req))
@@ -156,22 +155,21 @@ class TemplateServiceTest {
 
     @Test
     void update_modifies_and_creates_new_version_on_schema_change() {
-        Template existing = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(existing);
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
+        when(templateRepository.countInstallations("t-1")).thenReturn(0);
         TemplateSaveRequest req = new TemplateSaveRequest("saas-landing", "新名", "saas",
                 null, null, "{\"v\":2}", "更新");
 
         TemplateResponse resp = service.update("t-1", req);
 
         assertThat(resp.name()).isEqualTo("新名");
-        verify(versionMapper).insert(any());   // 新版本
-        verify(templateMapper).update(any());
+        // save 处理 update + 新版本（updateSchema 设置 pendingNewVersion）
+        verify(templateRepository).save(any());
     }
 
     @Test
     void update_throws_when_not_found() {
-        when(templateMapper.getById("t-x")).thenReturn(null);
+        when(templateRepository.findById("t-x")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.update("t-x", saveReq()))
                 .isInstanceOf(BusinessException.class)
@@ -182,22 +180,22 @@ class TemplateServiceTest {
     void publish_sets_published_status() {
         Template t = publishedTemplate();
         t.setStatus("draft");
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(new TemplateVersion());
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(t)));
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(new TemplateVersion());
+        when(templateRepository.countInstallations("t-1")).thenReturn(0);
 
         TemplateResponse resp = service.publish("t-1");
 
         assertThat(resp.status()).isEqualTo("published");
-        verify(templateMapper).update(any());
+        verify(templateRepository).save(any());
     }
 
     @Test
     void publish_throws_when_no_schema() {
         Template t = publishedTemplate();
         t.setStatus("draft");
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(null);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(t)));
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(null);
 
         assertThatThrownBy(() -> service.publish("t-1"))
                 .isInstanceOf(BusinessException.class)
@@ -206,9 +204,8 @@ class TemplateServiceTest {
 
     @Test
     void archive_sets_archived_status() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
+        when(templateRepository.countInstallations("t-1")).thenReturn(0);
 
         TemplateResponse resp = service.archive("t-1");
 
@@ -217,9 +214,8 @@ class TemplateServiceTest {
 
     @Test
     void feature_sets_featured_status() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
+        when(templateRepository.countInstallations("t-1")).thenReturn(0);
 
         TemplateResponse resp = service.feature("t-1");
 
@@ -228,22 +224,21 @@ class TemplateServiceTest {
 
     @Test
     void delete_removes_template() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
 
         service.delete("t-1");
 
-        verify(templateMapper).deleteById("t-1");
+        verify(templateRepository).deleteById("t-1");
     }
 
     @Test
     void install_publishes_event_for_published_template() {
         Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(t)));
         TemplateVersion v = new TemplateVersion();
         v.setSchemaJson("{\"components\":[]}");
         v.setVersion(1);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(v);
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(v);
 
         TemplateService.InstallResult result = service.install("t-1",
                 new TemplateInstallRequest("site-1", null, null));
@@ -257,11 +252,11 @@ class TemplateServiceTest {
     void install_throws_when_not_published() {
         Template t = publishedTemplate();
         t.setStatus("draft");   // draft 不可安装
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(t)));
         TemplateVersion v = new TemplateVersion();
         v.setSchemaJson("{}");
         v.setVersion(1);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(v);
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(v);
 
         assertThatThrownBy(() -> service.install("t-1",
                 new TemplateInstallRequest("site-1", null, null)))
@@ -271,9 +266,8 @@ class TemplateServiceTest {
 
     @Test
     void install_throws_when_schema_empty() {
-        Template t = publishedTemplate();
-        when(templateMapper.getById("t-1")).thenReturn(t);
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(null);
+        when(templateRepository.findById("t-1")).thenReturn(Optional.of(aggOf(publishedTemplate())));
+        when(templateRepository.getLatestVersion("t-1")).thenReturn(null);
 
         assertThatThrownBy(() -> service.install("t-1",
                 new TemplateInstallRequest("site-1", null, null)))

@@ -1,4 +1,5 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,9 +32,11 @@ import java.util.stream.Collectors;
 @Service
 public class CollectionService implements PublicCollectionPort {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CollectionService.class);
+
     private final CollectionRepository collectionRepository;
     private final SiteMapper siteMapper;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    
 
     public CollectionService(CollectionRepository collectionRepository, SiteMapper siteMapper) {
         this.collectionRepository = collectionRepository;
@@ -162,7 +165,7 @@ public class CollectionService implements PublicCollectionPort {
     private String jsonToString(JsonNode node) {
         if (node == null) return "{}";
         try {
-            return objectMapper.writeValueAsString(node);
+            return JsonUtil.MAPPER.writeValueAsString(node);
         } catch (Exception e) {
             return "{}";
         }

@@ -1,5 +1,6 @@
 package com.luban.backend.shared.domain;
 
+import com.luban.backend.shared.domain.event.CampaignActivatedEvent;
 import com.luban.backend.shared.domain.event.DomainEvent;
 import com.luban.backend.shared.entity.Campaign;
 import com.luban.backend.shared.entity.Channel;
@@ -8,7 +9,6 @@ import com.luban.backend.shared.exception.BusinessException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Campaign 聚合根（backend-ddd-refactor plan v2 T10，重写静态工具类为真聚合根）。
@@ -37,9 +37,6 @@ import java.util.UUID;
  * ChannelAggregate，此处不为它单独建聚合，避免 scope 膨胀）。
  */
 public final class CampaignAggregate {
-
-    /** Channel 短码格式白名单（防恶意注入，对齐 plan 敏感字段清单） */
-    public static final String CODE_PATTERN = "^[a-zA-Z0-9_-]{1,32}$";
 
     /** Channel 类型枚举 */
     public static final class ChannelType {
@@ -116,6 +113,8 @@ public final class CampaignAggregate {
         }
         root.setStatus(targetStatus);
         root.setUpdatedAt(Instant.now());
+        // G1 补：状态机转换发事件（planned→active / active→completed / →cancelled）
+        events.add(new CampaignActivatedEvent(root.getId(), root.getSiteId(), current, targetStatus, root.getUpdatedAt()));
     }
 
     /**
@@ -157,68 +156,7 @@ public final class CampaignAggregate {
         }
     }
 
-    /**
-     * 校验 Channel 创建参数 + 生成短码/shortUrl（无状态纯函数，独立 channel 与挂活动的 channel 共用）。
-     */
-    public static String validateAndResolveCode(String siteId, String code, String targetPageId, String pageSiteId) {
-        if (targetPageId == null || targetPageId.isBlank()) {
-            throw BusinessException.missingField("targetPageId");
-        }
-        if (!siteId.equals(pageSiteId)) {
-            throw BusinessException.pageNotBelongToSite();
-        }
-        if (code == null || code.isBlank()) {
-            return generateBase62Code();
-        }
-        if (!code.matches(CODE_PATTERN)) {
-            throw BusinessException.invalidCodeFormat();
-        }
-        return code;
-    }
-
-    /**
-     * Channel 状态转换（active↔inactive）。无状态纯函数，channel 可作独立聚合根。
-     */
-    public static void transitionChannel(Channel channel, String targetStatus) {
-        String current = channel.getStatus();
-        boolean valid =
-                ("active".equals(current) && "inactive".equals(targetStatus)) ||
-                ("inactive".equals(current) && "active".equals(targetStatus));
-        if (!valid) {
-            throw BusinessException.invalidStateTransition(current, targetStatus);
-        }
-        channel.setStatus(targetStatus);
-    }
-
-    /**
-     * 构建待持久化的 Channel 实体（设置 id/默认状态/shortUrl=code）。
-     */
-    public static Channel newChannel(String siteId, String campaignId, String code, String type,
-                                     String utmTemplate, String targetPageId) {
-        Channel ch = new Channel();
-        ch.setId(UUID.randomUUID().toString());
-        ch.setSiteId(siteId);
-        ch.setCampaignId(campaignId);
-        ch.setCode(code);
-        ch.setShortUrl(code);
-        ch.setType(type);
-        ch.setUtmTemplate(utmTemplate);
-        ch.setTargetPageId(targetPageId);
-        ch.setStatus("active");
-        return ch;
-    }
-
-    private static final String ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
-
-    /**
-     * base62 短码生成（6 位，[0-9a-zA-Z]）。碰撞由 DB 唯一约束兜底，调用方捕获重试。
-     */
-    private static String generateBase62Code() {
-        char[] buf = new char[6];
-        for (int i = 0; i < 6; i++) {
-            buf[i] = ALPHABET.charAt(SECURE_RNG.nextInt(62));
-        }
-        return new String(buf);
-    }
+    // === Channel 领域逻辑已迁移至 {@link ChannelDomain}（G1 修复 Y5：
+    //     Channel 子聚合的创建/状态机/短码生成是 Channel 自身关注点，不应寄生在 CampaignAggregate。
+    //     validateAndResolveCode / transitionChannel / newChannel / generateBase62Code / CODE_PATTERN 见 ChannelDomain）===
 }

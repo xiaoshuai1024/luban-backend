@@ -41,12 +41,13 @@ class CampaignServiceTest {
     @Mock private CampaignRepository campaignRepository;
     @Mock private SiteMapper siteMapper;
     @Mock private TenantGuardService tenantGuard;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     private CampaignService service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignService(campaignRepository, siteMapper, tenantGuard);
+        service = new CampaignService(campaignRepository, siteMapper, tenantGuard, eventPublisher);
     }
 
     private void stubSiteOk(String siteId) {

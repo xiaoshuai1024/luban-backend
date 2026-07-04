@@ -2,9 +2,13 @@ package com.luban.backend.operatorside.service;
 import com.luban.backend.operatorside.service.FeatureGateService;
 
 import com.luban.backend.shared.entity.FeatureGate;
+import com.luban.backend.shared.entity.Plan;
+import com.luban.backend.shared.entity.Subscription;
 import com.luban.backend.shared.mapper.FeatureGateMapper;
 import com.luban.backend.shared.mapper.SubscriptionMapper;
 import com.luban.backend.shared.mapper.UserSiteMapper;
+
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -89,5 +93,98 @@ class FeatureGateServiceTest {
         assertThat(FeatureGateService.KNOWN_KEYS).contains(
                 "lead_capture", "realtime_collab", "page_versioning", "poster_export",
                 "analytics", "ab_testing");
+    }
+
+    // ---------- v02 plan.gates 判定分支（owner 非 null 走通完整链路）----------
+
+    @Test
+    void isEnabled_returns_true_when_plan_gates_contains_key() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "analytics")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("growth");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("growth");
+        plan.setGates("[\"analytics\",\"ab_testing\"]");
+        when(planService.getPlan("growth")).thenReturn(plan);
+        when(planService.parseGates("[\"analytics\",\"ab_testing\"]"))
+                .thenReturn(List.of("analytics", "ab_testing"));
+
+        assertThat(service.isEnabled("site-1", "analytics")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_false_when_plan_does_not_contain_v02_new_key() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "ab_testing")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("free");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("free");
+        plan.setGates("[\"lead_capture\"]");
+        when(planService.getPlan("free")).thenReturn(plan);
+        when(planService.parseGates("[\"lead_capture\"]"))
+                .thenReturn(List.of("lead_capture"));
+
+        assertThat(service.isEnabled("site-1", "ab_testing")).isFalse();
+    }
+
+    @Test
+    void isEnabled_returns_true_for_v01_legacy_key_via_backward_compat() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "realtime_collab")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("free");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("free");
+        plan.setGates("[\"lead_capture\"]");
+        when(planService.getPlan("free")).thenReturn(plan);
+        when(planService.parseGates("[\"lead_capture\"]"))
+                .thenReturn(List.of("lead_capture"));
+
+        assertThat(service.isEnabled("site-1", "realtime_collab")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_default_when_subscription_null() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "lead_capture")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(null);
+
+        assertThat(service.isEnabled("site-1", "lead_capture")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_default_when_plan_null_and_v01_key() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "lead_capture")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("ghost");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(sub);
+        when(planService.getPlan("ghost")).thenReturn(null);
+        when(planService.parseGates(null)).thenReturn(java.util.Collections.emptyList());
+
+        assertThat(service.isEnabled("site-1", "lead_capture")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_false_when_plan_null_and_v02_new_key() {
+        when(featureGateMapper.getBySiteAndKey("site-1", "analytics")).thenReturn(null);
+        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("ghost");
+        when(subscriptionMapper.getByUserId("owner-1")).thenReturn(sub);
+        when(planService.getPlan("ghost")).thenReturn(null);
+        when(planService.parseGates(null)).thenReturn(java.util.Collections.emptyList());
+
+        assertThat(service.isEnabled("site-1", "analytics")).isFalse();
     }
 }

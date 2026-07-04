@@ -1,10 +1,11 @@
 package com.luban.backend.shared.domain;
 
 import com.luban.backend.shared.domain.event.DomainEvent;
+import com.luban.backend.shared.domain.event.ExperimentEndedEvent;
+import com.luban.backend.shared.domain.event.ExperimentStartedEvent;
 import com.luban.backend.shared.entity.AbExperiment;
 import com.luban.backend.shared.entity.AbVariant;
 import com.luban.backend.shared.exception.BusinessException;
-import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -46,18 +47,54 @@ public final class AbExperimentAggregate {
     }
 
     /**
+     * 工厂：创建新实验（draft 或 running）。
+     *
+     * <p>聚合根统一入口，避免 Service 直接 new AbExperiment() 绕过不变量。
+     * 变体通过 {@link #addVariant(AbVariant)} 追加；start 前的变体数量校验在 {@link #start(boolean)} 中。
+     *
+     * @param id            UUID（由 Service 生成）
+     * @param siteId        站点 id
+     * @param pageId        页面 id
+     * @param name          实验名
+     * @param trafficPct    流量百分比（≤0 时默认 100）
+     * @param initialStatus 初始状态（draft/running；null 视为 draft）
+     * @param startAt       running 状态的启动时刻（draft 可为 null）
+     */
+    public static AbExperimentAggregate newExperiment(String id, String siteId, String pageId,
+            String name, int trafficPct, String initialStatus, Instant startAt) {
+        AbExperiment exp = new AbExperiment();
+        exp.setId(id);
+        exp.setSiteId(siteId);
+        exp.setPageId(pageId);
+        exp.setName(name);
+        String status = initialStatus != null ? initialStatus : STATUS_DRAFT;
+        exp.setStatus(status);
+        exp.setTrafficPct(trafficPct > 0 ? trafficPct : 100);
+        if (STATUS_RUNNING.equals(status)) {
+            exp.setStartAt(startAt != null ? startAt : Instant.now());
+        }
+        exp.setCreatedAt(Instant.now());
+        return new AbExperimentAggregate(exp, new ArrayList<>());
+    }
+
+    /** 追加一个变体（start 前组装 variants 集合）。 */
+    public void addVariant(AbVariant variant) {
+        variants.add(variant);
+    }
+
+    /**
      * 启动实验（draft→running）。
      *
      * @param pageHasRunningExperiment 该 page 是否已有 running 实验（跨聚合查询，Service 传入）
      */
     public void start(boolean pageHasRunningExperiment) {
         if (pageHasRunningExperiment) {
-            throw new BusinessException(HttpStatus.CONFLICT, "EXPERIMENT_CONFLICT",
-                    "该页面已有运行中的实验");
+            throw BusinessException.experimentConflict("该页面已有运行中的实验");
         }
         assertTransition(STATUS_DRAFT, STATUS_RUNNING);
         root.setStatus(STATUS_RUNNING);
         root.setStartAt(Instant.now());
+        events.add(new ExperimentStartedEvent(root.getId(), root.getSiteId(), root.getPageId(), root.getStartAt()));
     }
 
     /** 结束实验（running→ended）。 */
@@ -65,6 +102,7 @@ public final class AbExperimentAggregate {
         assertTransition(STATUS_RUNNING, STATUS_ENDED);
         root.setStatus(STATUS_ENDED);
         root.setEndAt(Instant.now());
+        events.add(new ExperimentEndedEvent(root.getId(), root.getSiteId(), root.getPageId(), root.getEndAt()));
     }
 
     public AbExperiment toExperiment() {
@@ -90,14 +128,19 @@ public final class AbExperimentAggregate {
     // ===== 纯算法（无状态 static，非聚合根不变量但属领域计算） =====
 
     /**
-     * 稳定哈希（FNV-1a 32-bit）。同输入同输出，跨进程稳定，用于分桶确定性。
+     * 稳定哈希（FNV-1a 32-bit，int 算术）。
+     *
+     * <p>同输入同输出，跨进程稳定，用于分桶确定性。<b>这是生产分桶的权威实现</b>——
+     * AbService.assignVariant 经此方法计算 hash % 100，决定 visitor 是否进入实验流量 +
+     * 命中哪个 variant。改算法会改变线上分桶结果（流量重新分配），需 QA 验证。
+     *
+     * <p>返回 int（可能为负，调用方取 % 后按需处理）；与旧 AbService 私有 stableHash 字节一致。
      */
-    public static long stableHash(String input) {
-        long hash = 0x811c9dc5L;
+    public static int stableHash(String input) {
+        int hash = 0x811c9dc5;
         for (int i = 0; i < input.length(); i++) {
             hash ^= input.charAt(i);
-            hash *= 0x01000193L;
-            hash &= 0xFFFFFFFFL;   // 保持 32-bit
+            hash *= 0x01000193;
         }
         return hash;
     }
@@ -142,7 +185,7 @@ public final class AbExperimentAggregate {
      */
     public static SignificanceResult computeSignificance(VariantStats control, VariantStats experiment) {
         if (control == null || experiment == null) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "INSUFFICIENT_VARIANTS", "至少需要 2 个变体");
+            throw BusinessException.insufficientVariants();
         }
         long aViews = control.views();
         long aConv = control.conversions();

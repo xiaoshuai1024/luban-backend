@@ -25,20 +25,33 @@ import java.util.stream.Collectors;
 @Service
 public class CampaignService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CampaignService.class);
+
     private final CampaignRepository campaignRepository;
     private final SiteMapper siteMapper;
     private final TenantGuardService tenantGuard;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public CampaignService(CampaignRepository campaignRepository, SiteMapper siteMapper,
-                           TenantGuardService tenantGuard) {
+                           TenantGuardService tenantGuard,
+                           org.springframework.context.ApplicationEventPublisher eventPublisher) {
         this.campaignRepository = campaignRepository;
         this.siteMapper = siteMapper;
         this.tenantGuard = tenantGuard;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /** 拉取并发布聚合根累积的领域事件（AFTER_COMMIT 由 handler 消费）。 */
+    private void publishEvents(com.luban.backend.shared.domain.CampaignAggregate agg) {
+        agg.pullEvents().forEach(eventPublisher::publishEvent);
     }
 
     /** 站点存在性 + 归属校验 */
     private void ensureSite(String siteId) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (siteMapper.getById(siteId) == null) {
+            log.warn("站点不存在 siteId={}（疑似越权访问）", siteId);
+            throw BusinessException.siteNotFound();
+        }
         tenantGuard.ensureSiteAccess(siteId);
     }
 
@@ -77,6 +90,7 @@ public class CampaignService {
             agg.transition(req.status());   // 聚合根状态机
         }
         campaignRepository.save(agg);
+        publishEvents(agg);
         return CampaignResponse.fromEntity(agg.toCampaign());
     }
 

@@ -46,6 +46,7 @@ public class DatasourceRepositoryImpl implements DatasourceRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(DatasourceAggregate aggregate) {
         Datasource entity = aggregate.toEntity();
         if (datasourceMapper.getById(entity.getId()) == null) {

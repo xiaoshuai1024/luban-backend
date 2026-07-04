@@ -50,8 +50,7 @@ public class PageVersionService {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
         PageVersion v = versionMapper.getByIdAndPageId(versionId, pageId);
-        if (v == null) throw new BusinessException(
-            org.springframework.http.HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "版本不存在");
+        if (v == null) throw BusinessException.pageVersionNotFound();
         return PageVersionResponse.fromEntity(v, true);
     }
 
@@ -63,8 +62,7 @@ public class PageVersionService {
         Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
         PageVersion target = versionMapper.getByIdAndPageId(versionId, pageId);
-        if (target == null) throw new BusinessException(
-            org.springframework.http.HttpStatus.NOT_FOUND, "PAGE_VERSION_NOT_FOUND", "版本不存在");
+        if (target == null) throw BusinessException.pageVersionNotFound();
 
         // 覆盖 page.schema_json 为目标版本的 schema
         page.setSchemaJson(target.getSchemaJson());

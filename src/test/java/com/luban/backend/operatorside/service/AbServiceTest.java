@@ -1,14 +1,12 @@
 package com.luban.backend.operatorside.service;
 
+import com.luban.backend.shared.domain.AbExperimentAggregate;
 import com.luban.backend.shared.entity.AbAssignment;
 import com.luban.backend.shared.entity.AbExperiment;
 import com.luban.backend.shared.entity.AbVariant;
 import com.luban.backend.shared.entity.AnalyticsDaily;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.AbAssignmentMapper;
-import com.luban.backend.shared.mapper.AbExperimentMapper;
-import com.luban.backend.shared.mapper.AbVariantMapper;
-import com.luban.backend.shared.mapper.AnalyticsDailyMapper;
+import com.luban.backend.shared.repository.AbExperimentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,40 +32,39 @@ import static org.mockito.Mockito.when;
  *
  * <p>覆盖 CRUD（含单页单 running 冲突 EXPERIMENT_CONFLICT）、一致性哈希分桶（命中/未命中流量/幂等命中/
  * 无 variant 兜底）、χ² 显著性（显著性差异 + 变体不足 INSUFFICIENT_VARIANTS + 对照选取 fallback）。
- * mock 全部 Mapper，不启动 Spring/DB。
+ * v2：mock 改为 {@link AbExperimentRepository} + AbAssignmentMapper + AnalyticsDailyMapper
+ * （领域 Mapper 全部封装在 Repository，零直接依赖）。
  */
 @ExtendWith(MockitoExtension.class)
 class AbServiceTest {
 
-    @Mock private AbExperimentMapper experimentMapper;
-    @Mock private AbVariantMapper variantMapper;
-    @Mock private AbAssignmentMapper assignmentMapper;
-    @Mock private AnalyticsDailyMapper dailyMapper;
+    @Mock private AbExperimentRepository experimentRepository;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     private AbService service;
 
     @BeforeEach
     void setUp() {
-        service = new AbService(experimentMapper, variantMapper, assignmentMapper, dailyMapper);
+        service = new AbService(experimentRepository, eventPublisher);
     }
 
     // ===== listExperiments =====
 
     @Test
-    void listExperimentsReturnsMapperResult() {
+    void listExperimentsReturnsRepositoryResult() {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
-        when(experimentMapper.listBySite("site-1", "running")).thenReturn(List.of(exp));
+        when(experimentRepository.listBySiteId("site-1", "running")).thenReturn(List.of(exp));
 
         List<AbExperiment> result = service.listExperiments("site-1", "running");
 
         assertThat(result).extracting(AbExperiment::getId).containsExactly("exp-1");
-        verify(experimentMapper).listBySite("site-1", "running");
+        verify(experimentRepository).listBySiteId("site-1", "running");
     }
 
     @Test
     void listExperimentsWithNullStatusPassesThrough() {
-        when(experimentMapper.listBySite("site-1", null)).thenReturn(List.of());
+        when(experimentRepository.listBySiteId("site-1", null)).thenReturn(List.of());
 
         List<AbExperiment> result = service.listExperiments("site-1", null);
 
@@ -81,8 +79,8 @@ class AbServiceTest {
         exp.setId("exp-1");
         AbVariant v = new AbVariant();
         v.setId("var-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(v));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp, List.of(v))));
 
         AbService.AbExperimentDetail detail = service.getExperimentDetail("exp-1");
 
@@ -92,7 +90,7 @@ class AbServiceTest {
 
     @Test
     void getExperimentDetailThrowsWhenNotFound() {
-        when(experimentMapper.getById("nope")).thenReturn(null);
+        when(experimentRepository.findById("nope")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getExperimentDetail("nope"))
                 .isInstanceOf(BusinessException.class)
@@ -108,7 +106,7 @@ class AbServiceTest {
                 "site-1", "page-1", "Landing Test", "running", 80,
                 List.of(new AbService.VariantInput("A", "pv-a", 50, true),
                         new AbService.VariantInput("B", "pv-b", 50, false)));
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(null);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(null);
 
         AbExperiment created = service.createExperiment(input);
 
@@ -118,20 +116,17 @@ class AbServiceTest {
         assertThat(created.getTrafficPct()).isEqualTo(80);
         assertThat(created.getStartAt()).isNotNull();
 
-        ArgumentCaptor<AbExperiment> expCaptor = ArgumentCaptor.forClass(AbExperiment.class);
-        verify(experimentMapper).insert(expCaptor.capture());
-        assertThat(expCaptor.getValue().getStatus()).isEqualTo("running");
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<AbVariant>> varCaptor = ArgumentCaptor.forClass(List.class);
-        verify(variantMapper).batchInsert(varCaptor.capture());
-        List<AbVariant> inserted = varCaptor.getValue();
-        assertThat(inserted).hasSize(2);
-        assertThat(inserted.get(0).getLabel()).isEqualTo("A");
-        assertThat(inserted.get(0).getWeight()).isEqualTo(50);
-        assertThat(inserted.get(0).isControl()).isTrue();
-        assertThat(inserted.get(0).getExperimentId()).isEqualTo(created.getId());
-        assertThat(inserted.get(1).isControl()).isFalse();
+        ArgumentCaptor<AbExperimentAggregate> aggCaptor = ArgumentCaptor.forClass(AbExperimentAggregate.class);
+        verify(experimentRepository).save(aggCaptor.capture());
+        AbExperimentAggregate saved = aggCaptor.getValue();
+        assertThat(saved.toExperiment().getStatus()).isEqualTo("running");
+        assertThat(saved.variants()).hasSize(2);
+        AbVariant v0 = saved.variants().get(0);
+        assertThat(v0.getLabel()).isEqualTo("A");
+        assertThat(v0.getWeight()).isEqualTo(50);
+        assertThat(v0.isControl()).isTrue();
+        assertThat(v0.getExperimentId()).isEqualTo(created.getId());
+        assertThat(saved.variants().get(1).isControl()).isFalse();
     }
 
     @Test
@@ -139,7 +134,7 @@ class AbServiceTest {
         AbExperiment existing = new AbExperiment();
         existing.setId("exp-old");
         existing.setName("旧实验");
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(existing);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(existing);
 
         AbService.CreateExperimentInput input = new AbService.CreateExperimentInput(
                 "site-1", "page-1", "New", "running", 100,
@@ -150,13 +145,12 @@ class AbServiceTest {
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("EXPERIMENT_CONFLICT");
 
-        verify(experimentMapper, never()).insert(any());
-        verify(variantMapper, never()).batchInsert(any());
+        verify(experimentRepository, never()).save(any());
     }
 
     @Test
     void createDraftExperimentSkipsConflictCheck() {
-        // draft 状态不触发 findRunningByPage（仅在 status=running 时校验）
+        // draft 状态不触发 findRunningByPageId（仅在 status=running 时校验）
         AbService.CreateExperimentInput input = new AbService.CreateExperimentInput(
                 "site-1", "page-1", "Draft", "draft", null,
                 List.of(new AbService.VariantInput("A", "pv-a", null, null)));
@@ -166,27 +160,25 @@ class AbServiceTest {
         assertThat(created.getStatus()).isEqualTo("draft");
         assertThat(created.getTrafficPct()).isEqualTo(100);     // null 默认 100
         assertThat(created.getStartAt()).isNull();              // draft 不设 startAt
-        verify(experimentMapper, never()).findRunningByPage(anyString());
+        verify(experimentRepository, never()).findRunningByPageId(anyString());
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<AbVariant>> varCaptor = ArgumentCaptor.forClass(List.class);
-        verify(variantMapper).batchInsert(varCaptor.capture());
+        ArgumentCaptor<AbExperimentAggregate> aggCaptor = ArgumentCaptor.forClass(AbExperimentAggregate.class);
+        verify(experimentRepository).save(aggCaptor.capture());
         // weight null → 默认 50；isControl null → false
-        AbVariant inserted = varCaptor.getValue().get(0);
+        AbVariant inserted = aggCaptor.getValue().variants().get(0);
         assertThat(inserted.getWeight()).isEqualTo(50);
         assertThat(inserted.isControl()).isFalse();
     }
 
     @Test
-    void createExperimentWithEmptyVariantsDoesNotBatchInsert() {
+    void createExperimentWithEmptyVariantsDoesNotFail() {
         AbService.CreateExperimentInput input = new AbService.CreateExperimentInput(
                 "site-1", "page-1", "No variants", "draft", 100, List.of());
 
         AbExperiment created = service.createExperiment(input);
 
         assertThat(created.getId()).isNotNull();
-        verify(experimentMapper).insert(any(AbExperiment.class));
-        verify(variantMapper, never()).batchInsert(any());
+        verify(experimentRepository).save(any());
     }
 
     // ===== endExperiment =====
@@ -196,32 +188,50 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setStatus("running");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp, List.of())));
 
         AbExperiment ended = service.endExperiment("exp-1");
 
         assertThat(ended.getStatus()).isEqualTo("ended");
         assertThat(ended.getEndAt()).isNotNull();
-        verify(experimentMapper).updateStatus(exp);
+        verify(experimentRepository).save(any());
     }
 
     @Test
     void endExperimentThrowsWhenNotFound() {
-        when(experimentMapper.getById("nope")).thenReturn(null);
+        when(experimentRepository.findById("nope")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.endExperiment("nope"))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("EXPERIMENT_NOT_FOUND");
 
-        verify(experimentMapper, never()).updateStatus(any());
+        verify(experimentRepository, never()).save(any());
+    }
+
+    @Test
+    void endExperimentThrowsWhenInvalidTransition() {
+        // draft → ended 非法转换（聚合根状态机守护）
+        AbExperiment exp = new AbExperiment();
+        exp.setId("exp-1");
+        exp.setStatus("draft");
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp, List.of())));
+
+        assertThatThrownBy(() -> service.endExperiment("exp-1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("INVALID_STATE_TRANSITION");
+
+        verify(experimentRepository, never()).save(any());
     }
 
     // ===== assignVariant =====
 
     @Test
     void assignVariantReturnsNullWhenNoRunningExperiment() {
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(null);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(null);
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
@@ -236,14 +246,14 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setTrafficPct(0);
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(exp);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(exp);
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
         assertThat(result.inExperiment()).isFalse();
         assertThat(result.variantId()).isNull();
-        verify(assignmentMapper, never()).get(anyString(), anyString());
-        verify(assignmentMapper, never()).insert(any());
+        verify(experimentRepository, never()).getAssignment(anyString(), anyString());
+        verify(experimentRepository, never()).saveAssignment(any());
     }
 
     @Test
@@ -251,18 +261,18 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setTrafficPct(100);     // 全量流量必命中
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(exp);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(exp);
         AbAssignment existing = new AbAssignment();
         existing.setVariantId("var-prev");
-        when(assignmentMapper.get("visitor-1", "exp-1")).thenReturn(existing);
+        when(experimentRepository.getAssignment("visitor-1", "exp-1")).thenReturn(existing);
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
         assertThat(result.inExperiment()).isTrue();
         assertThat(result.experimentId()).isEqualTo("exp-1");
         assertThat(result.variantId()).isEqualTo("var-prev");   // 幂等返回已有分桶
-        verify(variantMapper, never()).listByExperiment(anyString());
-        verify(assignmentMapper, never()).insert(any());        // 已存在不重复插入
+        verify(experimentRepository, never()).listVariantsByExperimentId(anyString());
+        verify(experimentRepository, never()).saveAssignment(any());        // 已存在不重复插入
     }
 
     @Test
@@ -270,12 +280,12 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setTrafficPct(100);
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(exp);
-        when(assignmentMapper.get("visitor-1", "exp-1")).thenReturn(null);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(exp);
+        when(experimentRepository.getAssignment("visitor-1", "exp-1")).thenReturn(null);
         // A weight=100（吃掉所有 roll），B weight=0（永不命中）→ 必选 A
         AbVariant a = newVariant("var-a", "A", 100, true);
         AbVariant b = newVariant("var-b", "B", 0, false);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(a, b));
+        when(experimentRepository.listVariantsByExperimentId("exp-1")).thenReturn(List.of(a, b));
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
@@ -284,7 +294,7 @@ class AbServiceTest {
         assertThat(result.variantId()).isEqualTo("var-a");
 
         ArgumentCaptor<AbAssignment> captor = ArgumentCaptor.forClass(AbAssignment.class);
-        verify(assignmentMapper).insert(captor.capture());
+        verify(experimentRepository).saveAssignment(captor.capture());
         AbAssignment saved = captor.getValue();
         assertThat(saved.getVisitorId()).isEqualTo("visitor-1");
         assertThat(saved.getExperimentId()).isEqualTo("exp-1");
@@ -297,14 +307,14 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setTrafficPct(100);
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(exp);
-        when(assignmentMapper.get("visitor-1", "exp-1")).thenReturn(null);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of());
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(exp);
+        when(experimentRepository.getAssignment("visitor-1", "exp-1")).thenReturn(null);
+        when(experimentRepository.listVariantsByExperimentId("exp-1")).thenReturn(List.of());
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
         assertThat(result.inExperiment()).isFalse();
-        verify(assignmentMapper, never()).insert(any());
+        verify(experimentRepository, never()).saveAssignment(any());
     }
 
     @Test
@@ -312,15 +322,15 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setTrafficPct(100);
-        when(experimentMapper.findRunningByPage("page-1")).thenReturn(exp);
-        when(assignmentMapper.get("visitor-1", "exp-1")).thenReturn(null);
+        when(experimentRepository.findRunningByPageId("page-1")).thenReturn(exp);
+        when(experimentRepository.getAssignment("visitor-1", "exp-1")).thenReturn(null);
         AbVariant v = newVariant("var-a", "A", 0, true);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(v));
+        when(experimentRepository.listVariantsByExperimentId("exp-1")).thenReturn(List.of(v));
 
         AbService.AssignResult result = service.assignVariant("visitor-1", "page-1");
 
         assertThat(result.inExperiment()).isFalse();
-        verify(assignmentMapper, never()).insert(any());
+        verify(experimentRepository, never()).saveAssignment(any());
     }
 
     // ===== computeSignificance =====
@@ -329,8 +339,9 @@ class AbServiceTest {
     void computeSignificanceThrowsWhenInsufficientVariants() {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(newVariant("var-a", "A", 50, true)));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp,
+                        List.of(newVariant("var-a", "A", 50, true)))));
 
         assertThatThrownBy(() -> service.computeSignificance("exp-1"))
                 .isInstanceOf(BusinessException.class)
@@ -344,12 +355,14 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setSiteId("site-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        AbVariant a = newVariant("var-a", "A", 50, true);
-        AbVariant b = newVariant("var-b", "B", 50, false);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(a, b));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(List.of(daily("var-a", 1000, 100), daily("var-b", 1000, 200)));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp,
+                        List.of(newVariant("var-a", "A", 50, true),
+                                newVariant("var-b", "B", 50, false)))));
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-a")))
+                .thenReturn(new long[]{1000, 100});
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-b")))
+                .thenReturn(new long[]{1000, 200});
 
         AbService.SignificanceResult result = service.computeSignificance("exp-1");
 
@@ -372,12 +385,14 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setSiteId("site-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        AbVariant a = newVariant("var-a", "A", 50, true);
-        AbVariant b = newVariant("var-b", "B", 50, false);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(a, b));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(List.of(daily("var-a", 1000, 100), daily("var-b", 1000, 105)));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp,
+                        List.of(newVariant("var-a", "A", 50, true),
+                                newVariant("var-b", "B", 50, false)))));
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-a")))
+                .thenReturn(new long[]{1000, 100});
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-b")))
+                .thenReturn(new long[]{1000, 105});
 
         AbService.SignificanceResult result = service.computeSignificance("exp-1");
 
@@ -391,12 +406,14 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setSiteId("site-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        AbVariant a = newVariant("var-a", "A", 50, false);     // 非 control
-        AbVariant b = newVariant("var-b", "B", 50, false);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(a, b));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(List.of(daily("var-a", 100, 10), daily("var-b", 100, 12)));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp,
+                        List.of(newVariant("var-a", "A", 50, false),     // 非 control
+                                newVariant("var-b", "B", 50, false)))));
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-a")))
+                .thenReturn(new long[]{100, 10});
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-b")))
+                .thenReturn(new long[]{100, 12});
 
         AbService.SignificanceResult result = service.computeSignificance("exp-1");
 
@@ -410,13 +427,15 @@ class AbServiceTest {
         AbExperiment exp = new AbExperiment();
         exp.setId("exp-1");
         exp.setSiteId("site-1");
-        when(experimentMapper.getById("exp-1")).thenReturn(exp);
-        AbVariant a = newVariant("var-a", "A", 50, true);
-        AbVariant b = newVariant("var-b", "B", 50, false);
-        when(variantMapper.listByExperiment("exp-1")).thenReturn(List.of(a, b));
+        when(experimentRepository.findById("exp-1"))
+                .thenReturn(Optional.of(AbExperimentAggregate.reconstitute(exp,
+                        List.of(newVariant("var-a", "A", 50, true),
+                                newVariant("var-b", "B", 50, false)))));
         // 对照 0 views → controlRate=0；lift 分支 controlRate>0 不成立 → lift=0
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(List.of());
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-a")))
+                .thenReturn(new long[]{0, 0});
+        when(experimentRepository.aggregateDailyByVariant(eq("site-1"), eq("var-b")))
+                .thenReturn(new long[]{0, 0});
 
         AbService.SignificanceResult result = service.computeSignificance("exp-1");
 

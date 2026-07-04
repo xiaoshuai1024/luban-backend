@@ -10,14 +10,11 @@ import com.luban.backend.shared.dto.TemplateSaveRequest;
 import com.luban.backend.shared.entity.Template;
 import com.luban.backend.shared.entity.TemplateVersion;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.TemplateInstallationMapper;
-import com.luban.backend.shared.mapper.TemplateMapper;
-import com.luban.backend.shared.mapper.TemplateVersionMapper;
+import com.luban.backend.shared.repository.TemplateRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -26,28 +23,23 @@ import java.util.stream.Collectors;
  * TemplateService — 模板市场运营端 Service（template-marketplace plan）。
  *
  * <p>职责：模板 CRUD + 状态机（发布/归档/推荐）+ 安装（跨聚合：Template→Page）。
- * 对齐 {@code CampaignService} 范式：注入 Mapper，@Transactional，校验委托聚合根。
+ * 对齐 {@code CampaignService}/{@code SiteService} 范式：注入 {@link TemplateRepository}，
+ * @Transactional，校验委托聚合根。TemplateService 零领域 Mapper 依赖（3 个 Mapper 全部封装在 Repository）。
  *
- * <p>安装链路：复用 {@link PageService#create} 创建 draft Page + PageVersion 快照，
- * 单事务内完成「拷贝 schema → 创建 page → 记安装审计」。
+ * <p>安装链路：聚合根发 {@code TemplateInstalledEvent}（v2 跨聚合解耦，替代直接调 PageService.create），
+ * 由 {@code TemplateInstallHandler} 消费创建 draft Page + installation 审计。
  */
 @Service
 public class TemplateService {
 
-    private final TemplateMapper templateMapper;
-    private final TemplateVersionMapper versionMapper;
-    private final TemplateInstallationMapper installationMapper;
+    private final TemplateRepository templateRepository;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
 
-    public TemplateService(TemplateMapper templateMapper,
-                           TemplateVersionMapper versionMapper,
-                           TemplateInstallationMapper installationMapper,
+    public TemplateService(TemplateRepository templateRepository,
                            ObjectMapper objectMapper,
                            ApplicationEventPublisher eventPublisher) {
-        this.templateMapper = templateMapper;
-        this.versionMapper = versionMapper;
-        this.installationMapper = installationMapper;
+        this.templateRepository = templateRepository;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
     }
@@ -55,22 +47,21 @@ public class TemplateService {
     // === 查询 ===
 
     public TemplateResponse get(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        return TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(id));
+        TemplateAggregate agg = templateRepository.findById(id)
+                .orElseThrow(BusinessException::templateNotFound);
+        return TemplateResponse.fromEntity(agg.toTemplate(), templateRepository.countInstallations(id));
     }
 
     public List<TemplateResponse> list() {
-        return templateMapper.listAll().stream()
-                .map(t -> TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(t.getId())))
+        return templateRepository.listAll().stream()
+                .map(t -> TemplateResponse.fromEntity(t, templateRepository.countInstallations(t.getId())))
                 .collect(Collectors.toList());
     }
 
     /** 取模板最新版的 schema（编辑/安装时用） */
     public String getSchema(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        TemplateVersion v = versionMapper.getLatestByTemplateId(id);
+        templateRepository.findById(id).orElseThrow(BusinessException::templateNotFound);
+        TemplateVersion v = templateRepository.getLatestVersion(id);
         if (v == null) throw BusinessException.templateSchemaEmpty();
         return v.getSchemaJson();
     }
@@ -79,88 +70,74 @@ public class TemplateService {
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse create(TemplateSaveRequest req) {
-        if (templateMapper.countBySlug(req.slug()) > 0) throw BusinessException.templateSlugConflict();
+        if (templateRepository.countBySlug(req.slug()) > 0) throw BusinessException.templateSlugConflict();
         // 工厂内含 slug/category 校验 + schema 非空校验 + 初始版本快照
         TemplateAggregate agg = TemplateAggregate.newTemplate(
                 UUID.randomUUID().toString(), req.slug(), req.name(), req.category(),
                 req.description(), req.thumbnail(), UserContext.getUserId(),
                 req.schemaJson(), req.changeNote());
-        templateMapper.insert(agg.toTemplate());
-        versionMapper.insert(agg.pendingNewVersion());
-        agg.clearPendingNewVersion();
+        // save 处理 insert + 初始版本 v1（pendingNewVersion）
+        templateRepository.save(agg);
         return TemplateResponse.fromEntity(agg.toTemplate(), 0);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse update(String id, TemplateSaveRequest req) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        TemplateAggregate.validateSlug(req.slug());
-        TemplateAggregate.validateCategory(req.category());
+        TemplateAggregate agg = templateRepository.findById(id)
+                .orElseThrow(BusinessException::templateNotFound);
+        Template t = agg.toTemplate();
 
         // slug 改变时校验冲突
-        if (!t.getSlug().equals(req.slug()) && templateMapper.countBySlug(req.slug()) > 0) {
+        if (!t.getSlug().equals(req.slug()) && templateRepository.countBySlug(req.slug()) > 0) {
             throw BusinessException.templateSlugConflict();
         }
 
-        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
-        agg.toTemplate().setSlug(req.slug());
-        agg.toTemplate().setName(req.name());
-        agg.toTemplate().setCategory(req.category());
-        agg.toTemplate().setDescription(req.description());
-        agg.toTemplate().setThumbnail(req.thumbnail());
-        agg.toTemplate().setUpdatedAt(Instant.now());
+        // 经聚合根 update（内部校验 slug/category，替代旧 entity mutate + 静态校验器）
+        agg.update(req.slug(), req.name(), req.category(), req.description(), req.thumbnail());
 
         // schema 变更经聚合根 updateSchema（产新版本）
         if (req.schemaJson() != null && !req.schemaJson().isBlank()) {
             agg.updateSchema(req.schemaJson(), req.changeNote());
         }
-        templateMapper.update(agg.toTemplate());
-        if (agg.pendingNewVersion() != null) {
-            versionMapper.insert(agg.pendingNewVersion());
-            agg.clearPendingNewVersion();
-        }
+        // save 处理 update + 新版本（pendingNewVersion）
+        templateRepository.save(agg);
 
-        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
+        return TemplateResponse.fromEntity(agg.toTemplate(), templateRepository.countInstallations(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        templateMapper.deleteById(id); // template_versions FK CASCADE
+        templateRepository.findById(id).orElseThrow(BusinessException::templateNotFound);
+        templateRepository.deleteById(id); // template_versions FK CASCADE
     }
 
     // === 状态机（发布/归档/推荐，经聚合根实例方法）===
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse publish(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
-        agg.publish(versionMapper.getLatestByTemplateId(id) != null);
-        templateMapper.update(agg.toTemplate());
-        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
+        TemplateAggregate agg = templateRepository.findById(id)
+                .orElseThrow(BusinessException::templateNotFound);
+        agg.publish(templateRepository.getLatestVersion(id) != null);
+        templateRepository.save(agg);
+        return TemplateResponse.fromEntity(agg.toTemplate(), templateRepository.countInstallations(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse archive(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        TemplateAggregate agg = templateRepository.findById(id)
+                .orElseThrow(BusinessException::templateNotFound);
         agg.archive();
-        templateMapper.update(agg.toTemplate());
-        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
+        templateRepository.save(agg);
+        return TemplateResponse.fromEntity(agg.toTemplate(), templateRepository.countInstallations(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse feature(String id) {
-        Template t = templateMapper.getById(id);
-        if (t == null) throw BusinessException.templateNotFound();
-        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        TemplateAggregate agg = templateRepository.findById(id)
+                .orElseThrow(BusinessException::templateNotFound);
         agg.feature();
-        templateMapper.update(agg.toTemplate());
-        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
+        templateRepository.save(agg);
+        return TemplateResponse.fromEntity(agg.toTemplate(), templateRepository.countInstallations(id));
     }
 
     // === 安装（跨聚合解耦：发布 TemplateInstalledEvent，handler 创建 page + installation 审计）===
@@ -175,12 +152,13 @@ public class TemplateService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InstallResult install(String templateId, TemplateInstallRequest req) {
-        Template t = templateMapper.getById(templateId);
-        if (t == null) throw BusinessException.templateNotFound();
+        TemplateAggregate agg = templateRepository.findById(templateId)
+                .orElseThrow(BusinessException::templateNotFound);
+        Template t = agg.toTemplate();
 
         TemplateVersion v = req.version() != null
-                ? versionMapper.getByTemplateIdAndVersion(templateId, req.version())
-                : versionMapper.getLatestByTemplateId(templateId);
+                ? templateRepository.getVersion(templateId, req.version())
+                : templateRepository.getLatestVersion(templateId);
         if (v == null) throw BusinessException.templateSchemaEmpty();
 
         JsonNode schemaNode;
@@ -194,10 +172,9 @@ public class TemplateService {
                 ? req.path()
                 : "/templates/" + t.getSlug();
 
-        // 聚合根校验 + 发事件（跨聚合解耦）
-        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
-        agg.install(schemaNode, req.siteId(), t.getName(), path, v.getVersion());
-        templateMapper.update(agg.toTemplate());   // 触发 updatedAt（即使无字段变更，保持原行为）
+        // 聚合根校验 + 发事件（跨聚合解耦）。schema toString 后传聚合根（领域事件纯 POJO，不携带 JsonNode）。
+        agg.install(schemaNode.toString(), req.siteId(), t.getName(), path, v.getVersion());
+        templateRepository.save(agg);   // 触发 updatedAt（即使无字段变更，保持原行为）
         agg.pullEvents().forEach(eventPublisher::publishEvent);
 
         return new InstallResult(path, v.getVersion());

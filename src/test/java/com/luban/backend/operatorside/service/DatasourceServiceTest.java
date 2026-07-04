@@ -1,5 +1,6 @@
 package com.luban.backend.operatorside.service;
 
+import com.fasterxml.jackson.databind.node.POJONode;
 import com.luban.backend.shared.domain.DatasourceAggregate;
 import com.luban.backend.shared.dto.DatasourceResponse;
 import com.luban.backend.shared.dto.DatasourceTestResult;
@@ -13,12 +14,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -196,6 +199,94 @@ class DatasourceServiceTest {
         ds.setId("ds-1");
         ds.setType("api");
         ds.setConfigJson("{}");
+        when(datasourceRepository.findByIdAdmin("ds-1"))
+                .thenReturn(DatasourceAggregate.reconstitute(ds));
+
+        assertThatThrownBy(() -> service.testConnection("ds-1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("DATASOURCE_CONNECTION_FAILED");
+    }
+
+    // ===== DataIntegrityViolation 分支（isDuplicate 嗅探）=====
+
+    @Test
+    void create_throws_name_conflict_on_duplicate_violation() {
+        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        doThrow(new DataIntegrityViolationException("Duplicate entry 'n' for key 'uk_datasources_site_name'"))
+                .when(datasourceRepository).save(any());
+
+        assertThatThrownBy(() -> service.create("site-1", "n", "api", null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("DATASOURCE_NAME_CONFLICT");
+    }
+
+    @Test
+    void create_rethrows_non_duplicate_data_integrity_violation() {
+        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        doThrow(new DataIntegrityViolationException("Cannot delete or update a parent row: FK constraint fails"))
+                .when(datasourceRepository).save(any());
+
+        // non-duplicate message → 原异常重新抛出（不包装为 BusinessException）
+        assertThatThrownBy(() -> service.create("site-1", "n", "api", null))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .isNotInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void update_throws_name_conflict_on_duplicate() {
+        Datasource ds = new Datasource();
+        ds.setId("ds-1");
+        ds.setSiteId("site-1");
+        ds.setType("static");
+        when(datasourceRepository.findById("ds-1", "site-1"))
+                .thenReturn(DatasourceAggregate.reconstitute(ds));
+        doThrow(new DataIntegrityViolationException("Duplicate entry 'n' for key 'uk_datasources_site_name'"))
+                .when(datasourceRepository).save(any());
+
+        assertThatThrownBy(() -> service.update("ds-1", "site-1", "n", "api", null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("DATASOURCE_NAME_CONFLICT");
+    }
+
+    @Test
+    void update_rethrows_non_duplicate_data_integrity_violation() {
+        Datasource ds = new Datasource();
+        ds.setId("ds-1");
+        ds.setSiteId("site-1");
+        ds.setType("static");
+        when(datasourceRepository.findById("ds-1", "site-1"))
+                .thenReturn(DatasourceAggregate.reconstitute(ds));
+        doThrow(new DataIntegrityViolationException("FK constraint fails"))
+                .when(datasourceRepository).save(any());
+
+        assertThatThrownBy(() -> service.update("ds-1", "site-1", "n", "api", null))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .isNotInstanceOf(BusinessException.class);
+    }
+
+    // ===== configToJson strict 失败 =====
+
+    @Test
+    void create_throws_invalid_argument_when_config_unserializable() {
+        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        // POJONode 包装不可序列化对象 → writeValueAsString 抛异常 → INVALID_ARGUMENT
+        POJONode unserializable = new POJONode(new Object());
+
+        assertThatThrownBy(() -> service.create("site-1", "n", "api", unserializable))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("INVALID_ARGUMENT");
+        verify(datasourceRepository, never()).save(any());
+    }
+
+    // ===== testConnection URL 无效分支 =====
+
+    @Test
+    void testConnection_invalid_url_returns_connection_failed() {
+        Datasource ds = new Datasource();
+        ds.setId("ds-1");
+        ds.setType("api");
+        // "ht!tp://bad" scheme 含非法字符 → URI.create 抛 IllegalArgumentException → DATASOURCE_CONNECTION_FAILED
+        ds.setConfigJson("{\"url\":\"ht!tp://bad\"}");
         when(datasourceRepository.findByIdAdmin("ds-1"))
                 .thenReturn(DatasourceAggregate.reconstitute(ds));
 

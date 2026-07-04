@@ -1,5 +1,6 @@
 package com.luban.backend.shared.domain;
 
+import com.luban.backend.shared.domain.event.CampaignActivatedEvent;
 import com.luban.backend.shared.entity.Campaign;
 import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.exception.BusinessException;
@@ -105,6 +106,10 @@ class CampaignAggregateTest {
                 "c-1", "site-1", "活动", null, null);
         agg.transition("active");
         assertThat(agg.toCampaign().getStatus()).isEqualTo("active");
+        // G1 补：转换发 CampaignActivatedEvent（含 from/to）
+        assertThat(agg.pullEvents())
+                .singleElement()
+                .isInstanceOf(CampaignActivatedEvent.class);
     }
 
     @Test
@@ -114,6 +119,21 @@ class CampaignAggregateTest {
         CampaignAggregate agg = CampaignAggregate.reconstitute(persisted, List.of());
         agg.transition("completed");
         assertThat(agg.toCampaign().getStatus()).isEqualTo("completed");
+    }
+
+    @Test
+    void transitionActiveToCancelledSucceeds() {
+        // G1 补：活动运行中取消（active→cancelled 合法转换，原 transition matrix 缺此用例）
+        Campaign persisted = new Campaign();
+        persisted.setStatus("active");
+        CampaignAggregate agg = CampaignAggregate.reconstitute(persisted, List.of());
+
+        agg.transition("cancelled");
+
+        assertThat(agg.toCampaign().getStatus()).isEqualTo("cancelled");
+        assertThat(agg.pullEvents())
+                .singleElement()
+                .isInstanceOf(CampaignActivatedEvent.class);
     }
 
     @Test

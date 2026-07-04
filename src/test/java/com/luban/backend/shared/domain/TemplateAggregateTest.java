@@ -120,13 +120,26 @@ class TemplateAggregateTest {
     }
 
     @Test
-    void featuredBackToPublished() {
+    void featuredCanBeArchived() {
+        // featured → archived 合法转换（聚合根状态机允许）；原方法名 featuredBackToPublished
+        // 与 body（archive→archived）不符，已重命名为反映实际断言的语义。
         Template t = publishedTemplate();
         t.setStatus("featured");
         TemplateAggregate agg = TemplateAggregate.reconstitute(t);
 
         agg.archive();
         assertThat(agg.toTemplate().getStatus()).isEqualTo("archived");
+    }
+
+    @Test
+    void featuredBackToPublished() {
+        // G1 补 Y3-test：featured→published 合法转换（之前缺失此用例）
+        Template t = publishedTemplate();
+        t.setStatus("featured");
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+
+        agg.unfeature();
+        assertThat(agg.toTemplate().getStatus()).isEqualTo("published");
     }
 
     @Test
@@ -190,7 +203,7 @@ class TemplateAggregateTest {
         Template t = publishedTemplate();
         TemplateAggregate agg = TemplateAggregate.reconstitute(t);
 
-        agg.install(schema, "site-1", "落地页", "/landing", 1);
+        agg.install(schema.toString(), "site-1", "落地页", "/landing", 1);
 
         var events = agg.pullEvents();
         assertThat(events).hasSize(1);
@@ -203,7 +216,7 @@ class TemplateAggregateTest {
         TemplateAggregate agg = TemplateAggregate.newTemplate(
                 "t-1", "slug", "n", "saas", null, null, null, "{}", null);   // draft 态
 
-        assertThatThrownBy(() -> agg.install(om.readTree("{}"), "site-1", "n", "/x", 1))
+        assertThatThrownBy(() -> agg.install(om.readTree("{}").toString(), "site-1", "n", "/x", 1))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("TEMPLATE_NOT_PUBLISHED");

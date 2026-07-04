@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -26,15 +25,18 @@ public class AnalyticsAttributionHandler {
         this.analyticsIngestPort = analyticsIngestPort;
     }
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(LeadConvertedEvent event) {
         // AnalyticsEventInput(eventType, pageId, variantId, payload, clientTs, utm)
-        // 线索转化归因：eventType=lead_converted，pageId 留空（聚合级事件非页内事件），
-        // clientTs 用 Long（record 声明为 boxed Long，避免拆箱 NPE）。
+        // 线索转化归因：eventType=lead_converted，pageId 留空（聚合级事件非页内事件）。
+        // G1 修复：clientTs 用 event.convertedAt()（真实转化时刻），不用 handler 调度时的 Instant.now()
+        //（@Async + AFTER_COMMIT 下 wall-clock 可能差秒级，污染转化时间分析）。
+        // payload 携带 leadId（供归因回溯到具体线索）。
         AnalyticsEventInput ev = new AnalyticsEventInput(
-                "lead_converted", null, null, null,
-                Instant.now().toEpochMilli(), null);
+                "lead_converted", null, null,
+                "{\"leadId\":\"" + event.leadId() + "\"}",
+                event.convertedAt().toEpochMilli(), null);
         analyticsIngestPort.receiveBatch(event.siteId(), List.of(ev), null, null);
     }
 }

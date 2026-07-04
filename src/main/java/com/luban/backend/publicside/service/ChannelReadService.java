@@ -2,7 +2,7 @@ package com.luban.backend.publicside.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.luban.backend.shared.domain.CampaignAggregate;
+import com.luban.backend.shared.domain.ChannelDomain;
 import com.luban.backend.shared.dto.ShortLinkResolveResult;
 import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.entity.Page;
@@ -11,7 +11,6 @@ import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.mapper.ChannelMapper;
 import com.luban.backend.shared.mapper.PageMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -50,7 +49,7 @@ public class ChannelReadService {
      */
     public ShortLinkResolveResult resolve(String shortUrl) {
         // 短码格式校验（防注入，对齐敏感字段清单）
-        if (shortUrl == null || !shortUrl.matches(CampaignAggregate.CODE_PATTERN)) {
+        if (shortUrl == null || !shortUrl.matches(ChannelDomain.CODE_PATTERN)) {
             throw BusinessException.shortLinkNotFound();
         }
 
@@ -70,7 +69,7 @@ public class ChannelReadService {
         }
         // target page 已下线（archived）→ 503
         if ("archived".equals(page.getStatus())) {
-            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "TARGET_PAGE_UNAVAILABLE", "目标页面已下线");
+            throw new BusinessException(503, "TARGET_PAGE_UNAVAILABLE", "目标页面已下线");
         }
 
         // 取 site slug（website/BFF 用它拼 URL）

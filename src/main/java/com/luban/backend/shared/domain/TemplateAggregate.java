@@ -108,6 +108,11 @@ public final class TemplateAggregate {
         transitionTo(STATUS_FEATURED);
     }
 
+    /** 取消推荐（featured→published）。 */
+    public void unfeature() {
+        transitionTo(STATUS_PUBLISHED);
+    }
+
     /**
      * schema 变更产新版本（latestVersion+1）。
      *
@@ -136,14 +141,17 @@ public final class TemplateAggregate {
      *
      * <p>聚合根不直接创建 Page（跨聚合反模式）——发布事件由 TemplateInstallHandler 消费创建 page +
      * 写 installation 审计（pageId 同步可得）。
+     *
+     * @param schemaJson PageSchema JSON 字符串（G1 修复：领域事件不携带 Jackson JsonNode，
+     *                   保持 domain 纯 POJO；Service 调用前已 toString）。
      */
-    public TemplateAggregate install(JsonNode schema, String siteId,
+    public TemplateAggregate install(String schemaJson, String siteId,
                                      String pageName, String resolvedPath, int version) {
         if (!isMarketplaceVisible(root.getStatus())) {
             throw BusinessException.templateNotPublished();
         }
         events.add(new TemplateInstalledEvent(
-                root.getId(), siteId, pageName, resolvedPath, schema, Instant.now()));
+                root.getId(), siteId, pageName, resolvedPath, schemaJson, Instant.now()));
         return this;
     }
 
@@ -187,7 +195,24 @@ public final class TemplateAggregate {
         };
     }
 
-    // === 无状态静态校验（合法纯函数） ===
+    // === 元数据更新（实例方法，内部校验） ===
+
+    /**
+     * 更新模板元数据（slug/name/category/description/thumbnail）。聚合根内部校验 slug 格式 + category 白名单，
+     * 替代旧 Service 直接 mutate entity + 调静态校验器的贫血模式。
+     */
+    public void update(String slug, String name, String category, String description, String thumbnail) {
+        validateSlug(slug);
+        validateCategory(category);
+        root.setSlug(slug);
+        root.setName(name);
+        root.setCategory(category);
+        root.setDescription(description);
+        root.setThumbnail(thumbnail);
+        root.setUpdatedAt(Instant.now());
+    }
+
+    // === 无状态静态校验（合法纯函数；也供聚合根内部 + Service 边界校验复用） ===
 
     public static void validateCategory(String category) {
         if (category == null || !ALLOWED_CATEGORIES.contains(category)) {

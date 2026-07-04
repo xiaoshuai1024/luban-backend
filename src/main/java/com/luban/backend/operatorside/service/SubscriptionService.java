@@ -11,7 +11,6 @@ import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.mapper.PlanMapper;
 import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,6 +61,7 @@ public class SubscriptionService {
         SubscriptionAggregate agg = SubscriptionAggregate.newSubscriptionWithTrial(
                 userId, STARTER_PLAN, TRIAL_DURATION);
         subscriptionRepository.save(agg);
+        publishEvents(agg);   // G1 补：trial-started 等事件统一发布（与 subscribe 一致）
     }
 
     /** 切换套餐（trialing→active，聚合根清 trial 字段并发 SubscriptionUpgradedEvent）。 */
@@ -69,11 +69,11 @@ public class SubscriptionService {
     public SubscriptionResponse subscribe(String userId, SubscribeRequest req) {
         Plan target = planMapper.getByCode(req.planCode());
         if (target == null) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PLAN", "无效的套餐: " + req.planCode());
+            throw new BusinessException(400, "INVALID_PLAN", "无效的套餐: " + req.planCode());
         }
         SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
         if (agg == null) {
-            throw new BusinessException(HttpStatus.NOT_FOUND, "SUBSCRIPTION_NOT_FOUND", "订阅记录不存在");
+            throw new BusinessException(404, "SUBSCRIPTION_NOT_FOUND", "订阅记录不存在");
         }
         agg.subscribe(req.planCode());   // 聚合根状态机 + 清 trial 字段
         subscriptionRepository.save(agg);

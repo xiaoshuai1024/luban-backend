@@ -6,7 +6,6 @@ import com.luban.backend.shared.domain.event.SubscriptionUpgradedEvent;
 import com.luban.backend.shared.entity.Subscription;
 import com.luban.backend.shared.entity.TrialRecord;
 import com.luban.backend.shared.exception.BusinessException;
-import org.springframework.http.HttpStatus;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -123,10 +122,13 @@ public final class SubscriptionAggregate {
         events.add(new SubscriptionExpiredEvent(root.getUserId(), fromPlan, FREE_PLAN, now));
     }
 
-    /** 显式过期（active→expired）。完整状态机的显式转换。 */
+    /** 显式过期（active→expired）。完整状态机的显式转换，发 SubscriptionExpiredEvent（与 expireTrial 一致，供 FeatureGate 降级消费）。 */
     public void expire() {
         assertTransition(STATUS_ACTIVE, STATUS_EXPIRED);
+        String fromPlan = root.getPlanCode();
+        Instant now = Instant.now();
         root.setStatus(STATUS_EXPIRED);
+        events.add(new SubscriptionExpiredEvent(root.getUserId(), fromPlan, null, now));
     }
 
     /**
@@ -141,9 +143,7 @@ public final class SubscriptionAggregate {
             return;   // 无限制
         }
         if (currentCount >= quota) {
-            throw new BusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS,
-                    "QUOTA_EXCEEDED",
+            throw BusinessException.quotaExceeded(
                     String.format("用量超限：已用 %d/%d，请升级套餐", currentCount, quota));
         }
     }

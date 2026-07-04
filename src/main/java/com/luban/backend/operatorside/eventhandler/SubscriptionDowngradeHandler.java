@@ -31,7 +31,7 @@ public class SubscriptionDowngradeHandler {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriptionDowngradeHandler.class);
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(SubscriptionExpiredEvent event) {
         // 订阅/试用到期降级（trialing/active → free）落库后触发。
@@ -41,7 +41,7 @@ public class SubscriptionDowngradeHandler {
                 event.userId(), event.fromPlan(), event.toPlan());
     }
 
-    @Async
+    @Async("domainEventExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(SubscriptionUpgradedEvent event) {
         // 套餐升级落库后触发（Plan B 付费续费场景）。

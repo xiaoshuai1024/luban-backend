@@ -25,6 +25,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class QuotaService {
 
+    // G1 修复 N6：补 SLF4J Logger，429 拒绝留审计痕迹（便于排查客户配额投诉）
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(QuotaService.class);
+
     private static final String FREE_PLAN = "free";
 
     private final SubscriptionRepository subscriptionRepository;
@@ -42,6 +45,7 @@ public class QuotaService {
      * @param userId 用户 ID（null/blank 匿名用户不限）
      * @param metric leads/pages/visits
      */
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void checkAndIncrement(String userId, String metric) {
         if (userId == null || userId.isBlank()) return;  // 匿名用户不限
 
@@ -62,8 +66,8 @@ public class QuotaService {
         } else {
             // 无订阅记录兜底：直接校验（避免漏检）
             if (newCount >= quota) {
-                throw new BusinessException(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
-                        "QUOTA_EXCEEDED",
+                log.warn("配额超限：userId={} metric={} used={}/{}", userId, metric, newCount, quota);
+                throw BusinessException.quotaExceeded(
                         String.format("用量超限：%s 已用 %d/%d，请升级套餐", metricLabel(metric), newCount, quota));
             }
         }

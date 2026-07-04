@@ -40,6 +40,7 @@ public class SiteRepositoryImpl implements SiteRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(SiteAggregate aggregate) {
         Site entity = aggregate.toSite();
         if (siteMapper.getById(entity.getId()) == null) {

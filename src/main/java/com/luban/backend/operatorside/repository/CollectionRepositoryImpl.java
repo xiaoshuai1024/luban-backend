@@ -43,6 +43,7 @@ public class CollectionRepositoryImpl implements CollectionRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(CollectionAggregate aggregate) {
         ContentCollection root = aggregate.toCollection();
         if (collectionMapper.getByIdAndSiteId(root.getId(), root.getSiteId()) == null) {

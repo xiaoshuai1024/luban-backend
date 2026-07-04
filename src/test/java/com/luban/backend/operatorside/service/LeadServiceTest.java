@@ -1,6 +1,7 @@
 package com.luban.backend.operatorside.service;
 import com.luban.backend.operatorside.service.LeadService;
 import com.luban.backend.shared.crypto.LeadCryptoService;
+import com.luban.backend.shared.domain.LeadAggregate;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
 
@@ -12,9 +13,9 @@ import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.mapper.FormMapper;
 import com.luban.backend.shared.mapper.LeadAuditLogMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.repository.LeadRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,15 +37,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * LeadService 编排单测：mock mapper/antiSpam/notify，真实 Dedup/Crypto/StatusMachine/TenantGuard。
+ * LeadService 编排单测：mock repository/antiSpam/notify，真实 Dedup/Crypto/StatusMachine/TenantGuard。
  * 覆盖提交成功、去重(reject/mark/overwrite/merge)、防刷、captcha、表单不存在、
  * contact 加密、siteId 校验（T-be-2）、keyword 搜索（T-be-3）、解密查看（T-be-5）、tenant authz（🟡）。
+ * v2：mock 改为 {@link LeadRepository}（领域 Mapper 封装在 Repository，零直接依赖）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeadServiceTest {
 
     @Mock private FormMapper formMapper;
-    @Mock private LeadMapper leadMapper;
+    @Mock private LeadRepository leadRepository;
     @Mock private SiteMapper siteMapper;
     @Mock private LeadAuditLogMapper leadAuditMapper;
     @Mock private UserSiteMapper userSiteMapper;
@@ -75,7 +78,7 @@ class LeadServiceTest {
     @BeforeEach
     void setup() {
         TenantGuardService tenantGuard = new TenantGuardService(userSiteMapper);
-        service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper, tenantGuard,
+        service = new LeadService(formMapper, leadRepository, siteMapper, leadAuditMapper, tenantGuard,
                 new DedupService(), antiSpamService,
                 new LeadCryptoService(""), quotaService,
                 userSiteMapper, eventPublisher);
@@ -92,14 +95,14 @@ class LeadServiceTest {
     void submitSuccessInsertsNewLeadAndNotifies() {
         when(formMapper.getById("form-1")).thenReturn(sampleForm());
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(eq("form-1"), anyString(), anyInt())).thenReturn(0);
+        when(leadRepository.countByFormHashInWindow(eq("form-1"), anyString(), anyInt())).thenReturn(0);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
         assertThat(result.status()).isEqualTo("new");
         assertThat(result.dedup()).isFalse();
         assertThat(result.leadId()).isNotBlank();
-        verify(leadMapper).insert(any());
+        verify(leadRepository).save(any());
         // notify 通过 afterCommit 回调执行；单元测试无事务上下文时不触发（需集成测试验证）
     }
 
@@ -107,14 +110,14 @@ class LeadServiceTest {
     void submitEncryptsContactNotPlain() {
         when(formMapper.getById("form-1")).thenReturn(sampleForm());
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(0);
+        when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(0);
 
-        org.mockito.ArgumentCaptor<com.luban.backend.shared.entity.Lead> captor =
-                org.mockito.ArgumentCaptor.forClass(com.luban.backend.shared.entity.Lead.class);
+        org.mockito.ArgumentCaptor<com.luban.backend.shared.domain.LeadAggregate> captor =
+                org.mockito.ArgumentCaptor.forClass(com.luban.backend.shared.domain.LeadAggregate.class);
 
         service.submit(req("13800000001"));
-        verify(leadMapper).insert(captor.capture());
-        String stored = captor.getValue().getContactJson();
+        verify(leadRepository).save(captor.capture());
+        String stored = captor.getValue().toLead().getContactJson();
         assertThat(stored).isNotEqualTo("{\"phone\":\"13800000001\"}"); // 非明文
         assertThat(stored).doesNotContain("13800000001"); // 明文不出现在加密串
     }
@@ -123,13 +126,13 @@ class LeadServiceTest {
     void submitDuplicateRejectThrows() {
         when(formMapper.getById("form-1")).thenReturn(sampleForm());
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1); // 已存在
+        when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1); // 已存在
 
         assertThatThrownBy(() -> service.submit(req("13800000001")))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("LEAD_DUPLICATE");
-        verify(leadMapper, never()).insert(any());
+        verify(leadRepository, never()).save(any());
     }
 
     @Test
@@ -138,13 +141,13 @@ class LeadServiceTest {
         f.setDedupPolicy("mark");
         when(formMapper.getById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+        when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
         assertThat(result.status()).isEqualTo("invalid");
         assertThat(result.dedup()).isTrue();
-        verify(leadMapper).insert(any());
+        verify(leadRepository).save(any());
     }
 
     @Test
@@ -156,7 +159,7 @@ class LeadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("LEAD_SPAM_BLOCKED");
-        verify(leadMapper, never()).insert(any());
+        verify(leadRepository, never()).save(any());
     }
 
     @Test
@@ -179,14 +182,14 @@ class LeadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("SITE_NOT_FOUND");
-        verify(leadMapper, never()).listByQuery(anyString(), any(), any(), any(), anyInt(), anyInt());
+        verify(leadRepository, never()).listByQuery(anyString(), any(), any(), any(), anyInt(), anyInt());
     }
 
     @Test
     void listReturnsResultForValidSiteId() {
         when(siteMapper.getById("site-1")).thenReturn(sampleSite());
-        when(leadMapper.listByQuery(eq("site-1"), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
-        when(leadMapper.countByQuery(eq("site-1"), any(), any(), any())).thenReturn(0);
+        when(leadRepository.listByQuery(eq("site-1"), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(leadRepository.countByQuery(eq("site-1"), any(), any(), any())).thenReturn(0);
 
         Map<String, Object> result = service.list("site-1", null, null, null, null, 1, 20);
 
@@ -221,7 +224,7 @@ class LeadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("SITE_NOT_FOUND");
-        verify(leadMapper, never()).listAllForExport(anyString());
+        verify(leadRepository, never()).listAllForExport(anyString());
     }
 
     // ---- T-be-4: OVERWRITE / MERGE / captcha ----
@@ -232,14 +235,14 @@ class LeadServiceTest {
         f.setDedupPolicy("overwrite");
         when(formMapper.getById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+        when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
         assertThat(result.dedup()).isTrue();
         // 仅删除窗内旧记录（修复 🔴 跨窗口误删）+ 插入新记录
-        verify(leadMapper).deleteByFormHashInWindow(eq("form-1"), anyString(), anyInt());
-        verify(leadMapper).insert(any());
+        verify(leadRepository).deleteByFormHashInWindow(eq("form-1"), anyString(), anyInt());
+        verify(leadRepository).save(any());
     }
 
     @Test
@@ -248,7 +251,7 @@ class LeadServiceTest {
         f.setDedupPolicy("merge");
         when(formMapper.getById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
-        when(leadMapper.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
+        when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(1);
         // 旧记录（contact 已加密）
         Lead existing = new Lead();
         existing.setId("lead-old");
@@ -256,15 +259,15 @@ class LeadServiceTest {
         existing.setStatus("new");
         LeadCryptoService crypto = new LeadCryptoService("");
         existing.setContactJson(crypto.encrypt("{\"phone\":\"13800000001\"}"));
-        when(leadMapper.getByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(existing);
+        when(leadRepository.getByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(existing);
 
         LeadSubmitResult result = service.submit(req("13800000001"));
 
         assertThat(result.dedup()).isTrue();
         assertThat(result.leadId()).isEqualTo("lead-old");
         // MERGE：更新旧记录（不插新）
-        verify(leadMapper).updateContact(eq("lead-old"), eq("site-1"), anyString(), any(), any());
-        verify(leadMapper, never()).insert(any());
+        verify(leadRepository).updateContact(eq("lead-old"), eq("site-1"), anyString(), any(), any());
+        verify(leadRepository, never()).save(any());
     }
 
     @Test
@@ -278,7 +281,7 @@ class LeadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo("LEAD_CAPTCHA_INVALID");
-        verify(leadMapper, never()).insert(any());
+        verify(leadRepository, never()).save(any());
     }
 
     // ---- T-be-3: keyword 搜索 ----
@@ -306,7 +309,7 @@ class LeadServiceTest {
         l2.setContactJson(crypto.encrypt("{\"phone\":\"13900000000\",\"name\":\"李四\"}"));
         l2.setCreatedAt(now);
         l2.setUpdatedAt(now);
-        when(leadMapper.listByQuery(eq("site-1"), any(), any(), any(), eq(0), anyInt()))
+        when(leadRepository.listByQuery(eq("site-1"), any(), any(), any(), eq(0), anyInt()))
                 .thenReturn(List.of(l, l2));
 
         Map<String, Object> result = service.list("site-1", null, null, null, "张三", 1, 20);
@@ -330,7 +333,7 @@ class LeadServiceTest {
         l.setStatus("new");
         LeadCryptoService crypto = new LeadCryptoService("");
         l.setContactJson(crypto.encrypt("{\"phone\":\"13812345678\",\"name\":\"张三\"}"));
-        when(leadMapper.getByIdAndSiteId("l1", "site-1")).thenReturn(l);
+        when(leadRepository.findById("l1", "site-1")).thenReturn(Optional.of(LeadAggregate.reconstitute(l)));
 
         Map<String, String> contact = service.getContact("site-1", "l1", "user-9");
 

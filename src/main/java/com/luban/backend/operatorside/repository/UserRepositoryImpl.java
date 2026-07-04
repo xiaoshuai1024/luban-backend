@@ -41,6 +41,7 @@ public class UserRepositoryImpl implements UserRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(UserAggregate aggregate) {
         User entity = aggregate.toEntity();
         // 判定新建 vs 更新：新建时 createdAt == updatedAt（工厂同时设）；

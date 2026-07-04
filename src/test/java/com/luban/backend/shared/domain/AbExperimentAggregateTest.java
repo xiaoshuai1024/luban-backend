@@ -1,5 +1,7 @@
 package com.luban.backend.shared.domain;
 
+import com.luban.backend.shared.domain.event.ExperimentEndedEvent;
+import com.luban.backend.shared.domain.event.ExperimentStartedEvent;
 import com.luban.backend.shared.entity.AbExperiment;
 import com.luban.backend.shared.entity.AbVariant;
 import com.luban.backend.shared.exception.BusinessException;
@@ -32,6 +34,10 @@ class AbExperimentAggregateTest {
 
         assertThat(agg.toExperiment().getStatus()).isEqualTo("running");
         assertThat(agg.toExperiment().getStartAt()).isNotNull();
+        // G1 补：start 发 ExperimentStartedEvent（聚合根拥有状态机事件）
+        assertThat(agg.pullEvents())
+                .singleElement()
+                .isInstanceOf(ExperimentStartedEvent.class);
     }
 
     @Test
@@ -67,6 +73,10 @@ class AbExperimentAggregateTest {
 
         assertThat(agg.toExperiment().getStatus()).isEqualTo("ended");
         assertThat(agg.toExperiment().getEndAt()).isNotNull();
+        // G1 补：end 发 ExperimentEndedEvent
+        assertThat(agg.pullEvents())
+                .singleElement()
+                .isInstanceOf(ExperimentEndedEvent.class);
     }
 
     @Test
@@ -122,15 +132,15 @@ class AbExperimentAggregateTest {
     @Test
     void stableHashIsDeterministicForSameInput() {
         // 同输入同输出（FNV-1a 确定性）
-        long h1 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
-        long h2 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
+        int h1 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
+        int h2 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
         assertThat(h1).isEqualTo(h2);
     }
 
     @Test
     void stableHashDiffersForDifferentInput() {
-        long h1 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
-        long h2 = AbExperimentAggregate.stableHash("visitor-2:exp-1");
+        int h1 = AbExperimentAggregate.stableHash("visitor-1:exp-1");
+        int h2 = AbExperimentAggregate.stableHash("visitor-2:exp-1");
         assertThat(h1).isNotEqualTo(h2);
     }
 

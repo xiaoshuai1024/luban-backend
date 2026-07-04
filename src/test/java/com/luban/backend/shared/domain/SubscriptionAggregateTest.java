@@ -99,8 +99,8 @@ class SubscriptionAggregateTest {
     }
 
     @Test
-    void expireTransitionsActiveToExpired() {
-        // active→expired 显式转换（完整状态机）
+    void expireTransitionsActiveToExpiredAndEmitsEvent() {
+        // active→expired 显式转换（完整状态机），并验证与 expireTrial 对称地发出 SubscriptionExpiredEvent
         Subscription persisted = trialingSubscription();
         persisted.setStatus("active");
         SubscriptionAggregate agg = SubscriptionAggregate.reconstitute(persisted, null);
@@ -108,6 +108,9 @@ class SubscriptionAggregateTest {
         agg.expire();
 
         assertThat(agg.toSubscription().getStatus()).isEqualTo("expired");
+        assertThat(agg.pullEvents())
+                .singleElement()
+                .isInstanceOf(SubscriptionExpiredEvent.class);
     }
 
     @Test

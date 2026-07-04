@@ -52,6 +52,7 @@ public class TemplateRepositoryImpl implements TemplateRepository {
     public int countBySlug(String slug) { return templateMapper.countBySlug(slug); }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(TemplateAggregate aggregate) {
         Template entity = aggregate.toTemplate();
         if (templateMapper.getById(entity.getId()) == null) {

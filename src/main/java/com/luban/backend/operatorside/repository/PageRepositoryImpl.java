@@ -6,6 +6,7 @@ import com.luban.backend.shared.mapper.PageMapper;
 import com.luban.backend.shared.repository.PageRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,23 +37,26 @@ public class PageRepositoryImpl implements PageRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(PageAggregate aggregate) {
         Page entity = aggregate.toPage();
         if (pageMapper.getByIdAndSiteId(entity.getId(), entity.getSiteId()) == null) {
             pageMapper.insert(entity);
         } else {
+            // G1 修复 Y3：update SQL 已含 published_at/published_by，单条 update 即可，
+            // 不再需要双写（旧实现先 update 再 updatePublishStatus 补刷发布列）。
             pageMapper.update(entity);
-            // 已发布页补刷 published_at/published_by（update SQL 不含这两列）
-            if (entity.getPublishedAt() != null) {
-                pageMapper.updatePublishStatus(entity.getId(), entity.getSiteId(),
-                        entity.getStatus(), entity.getPublishedAt(),
-                        entity.getPublishedBy(), entity.getUpdatedAt());
-            }
         }
     }
 
     @Override
     public int deleteByIdAndSiteId(String id, String siteId) {
         return pageMapper.deleteByIdAndSiteId(id, siteId);
+    }
+
+    @Override
+    public void updatePublishStatus(String id, String siteId, String status,
+                                    Instant publishedAt, String publishedBy, Instant updatedAt) {
+        pageMapper.updatePublishStatus(id, siteId, status, publishedAt, publishedBy, updatedAt);
     }
 }

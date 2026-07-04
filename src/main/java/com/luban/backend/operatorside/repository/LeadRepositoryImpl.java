@@ -30,6 +30,7 @@ public class LeadRepositoryImpl implements LeadRepository {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(LeadAggregate agg) {
         leadMapper.insert(agg.toLead());
     }
