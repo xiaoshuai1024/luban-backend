@@ -1,9 +1,12 @@
 package com.luban.backend.operatorside.eventhandler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.luban.backend.shared.auth.UserContext;
 import com.luban.backend.shared.domain.event.TemplateInstalledEvent;
 import com.luban.backend.shared.entity.Page;
+import com.luban.backend.shared.entity.TemplateInstallation;
 import com.luban.backend.shared.mapper.PageMapper;
+import com.luban.backend.shared.mapper.TemplateInstallationMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -34,9 +37,11 @@ public class TemplateInstallHandler {
     private static final Logger log = LoggerFactory.getLogger(TemplateInstallHandler.class);
 
     private final PageMapper pageMapper;
+    private final TemplateInstallationMapper installationMapper;
 
-    public TemplateInstallHandler(PageMapper pageMapper) {
+    public TemplateInstallHandler(PageMapper pageMapper, TemplateInstallationMapper installationMapper) {
         this.pageMapper = pageMapper;
+        this.installationMapper = installationMapper;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -47,7 +52,6 @@ public class TemplateInstallHandler {
         page.setId(UUID.randomUUID().toString());
         page.setSiteId(event.siteId());
         page.setPath(event.path());
-        // Page 实体字段为 name（非 title），对齐 pages 表 schema。
         page.setName(event.pageName());
         page.setStatus("draft");
         page.setSchemaJson(schema != null ? schema.toString() : "{}");
@@ -55,6 +59,17 @@ public class TemplateInstallHandler {
         page.setCreatedAt(now);
         page.setUpdatedAt(now);
         pageMapper.insert(page);
+
+        // 写 installation 审计（pageId 同步可得，v2 接管自 TemplateService.install）
+        TemplateInstallation inst = new TemplateInstallation();
+        inst.setId(UUID.randomUUID().toString());
+        inst.setTemplateId(event.templateId());
+        inst.setSiteId(event.siteId());
+        inst.setPageId(page.getId());
+        inst.setInstallerId(UserContext.getUserId());
+        inst.setCreatedAt(Instant.now());
+        installationMapper.insert(inst);
+
         log.info("Template installed: templateId={}, siteId={}, pageId={}",
                 event.templateId(), event.siteId(), page.getId());
     }

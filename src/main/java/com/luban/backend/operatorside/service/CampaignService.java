@@ -11,7 +11,6 @@ import com.luban.backend.shared.mapper.SiteMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -59,19 +58,11 @@ public class CampaignService {
     @Transactional(rollbackFor = Exception.class)
     public CampaignResponse create(CampaignSaveRequest req) {
         ensureSite(req.siteId());
-        CampaignAggregate.validateCampaignCreate(req.name(), req.startAt(), req.endAt());
-
-        Campaign c = new Campaign();
-        c.setId(UUID.randomUUID().toString());
-        c.setSiteId(req.siteId());
-        c.setName(req.name());
-        c.setStartAt(req.startAt());
-        c.setEndAt(req.endAt());
-        c.setStatus("planned");
-        c.setCreatedAt(Instant.now());
-        c.setUpdatedAt(Instant.now());
-        campaignMapper.insert(c);
-        return CampaignResponse.fromEntity(c);
+        // 工厂内含校验（时间窗 + name 非空），状态机初始 planned 由聚合根守护
+        CampaignAggregate agg = CampaignAggregate.newCampaign(
+                UUID.randomUUID().toString(), req.siteId(), req.name(), req.startAt(), req.endAt());
+        campaignMapper.insert(agg.toCampaign());
+        return CampaignResponse.fromEntity(agg.toCampaign());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -80,21 +71,13 @@ public class CampaignService {
         Campaign existing = campaignMapper.getByIdAndSiteId(id, siteId);
         if (existing == null) throw BusinessException.campaignNotFound();
 
-        if (req.name() != null) existing.setName(req.name());
-        if (req.startAt() != null) existing.setStartAt(req.startAt());
-        if (req.endAt() != null) existing.setEndAt(req.endAt());
-        // 时间窗校验
-        if (existing.getStartAt() != null && existing.getEndAt() != null
-                && existing.getEndAt().isBefore(existing.getStartAt())) {
-            throw BusinessException.invalidTimeWindow();
-        }
-        // 状态转换（经聚合根状态机）
+        CampaignAggregate agg = CampaignAggregate.reconstitute(existing, null);
+        agg.update(req.name(), req.startAt(), req.endAt());
         if (req.status() != null && !req.status().equals(existing.getStatus())) {
-            CampaignAggregate.transitionCampaign(existing, req.status());
+            agg.transition(req.status());   // 聚合根状态机
         }
-        existing.setUpdatedAt(Instant.now());
-        campaignMapper.update(existing);
-        return CampaignResponse.fromEntity(existing);
+        campaignMapper.update(agg.toCampaign());
+        return CampaignResponse.fromEntity(agg.toCampaign());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -102,10 +85,9 @@ public class CampaignService {
         ensureSite(siteId);
         Campaign existing = campaignMapper.getByIdAndSiteId(id, siteId);
         if (existing == null) throw BusinessException.campaignNotFound();
-        // B3 修复：campaign 下有 channel 时拒绝删除（FK RESTRICT → 409 而非 500）
-        if (!channelMapper.listByCampaignId(id).isEmpty()) {
-            throw BusinessException.campaignHasChannels();
-        }
+        // 有 channel 拒绝删除：聚合根断言决策（跨聚合查询 Service 传入 boolean）
+        CampaignAggregate agg = CampaignAggregate.reconstitute(existing, null);
+        agg.assertDeletable(!channelMapper.listByCampaignId(id).isEmpty());
         campaignMapper.deleteByIdAndSiteId(id, siteId);
     }
 }

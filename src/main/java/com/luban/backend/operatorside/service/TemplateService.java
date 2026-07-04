@@ -2,19 +2,18 @@ package com.luban.backend.operatorside.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.luban.backend.operatorside.service.PageService;
+import com.luban.backend.shared.auth.UserContext;
 import com.luban.backend.shared.domain.TemplateAggregate;
 import com.luban.backend.shared.dto.TemplateInstallRequest;
 import com.luban.backend.shared.dto.TemplateResponse;
 import com.luban.backend.shared.dto.TemplateSaveRequest;
 import com.luban.backend.shared.entity.Template;
-import com.luban.backend.shared.entity.TemplateInstallation;
 import com.luban.backend.shared.entity.TemplateVersion;
 import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.mapper.TemplateInstallationMapper;
 import com.luban.backend.shared.mapper.TemplateMapper;
 import com.luban.backend.shared.mapper.TemplateVersionMapper;
-import com.luban.backend.shared.auth.UserContext;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,19 +37,19 @@ public class TemplateService {
     private final TemplateMapper templateMapper;
     private final TemplateVersionMapper versionMapper;
     private final TemplateInstallationMapper installationMapper;
-    private final PageService pageService;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TemplateService(TemplateMapper templateMapper,
                            TemplateVersionMapper versionMapper,
                            TemplateInstallationMapper installationMapper,
-                           PageService pageService,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           ApplicationEventPublisher eventPublisher) {
         this.templateMapper = templateMapper;
         this.versionMapper = versionMapper;
         this.installationMapper = installationMapper;
-        this.pageService = pageService;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     // === 查询 ===
@@ -80,39 +79,16 @@ public class TemplateService {
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse create(TemplateSaveRequest req) {
-        TemplateAggregate.validateSlug(req.slug());
-        TemplateAggregate.validateCategory(req.category());
         if (templateMapper.countBySlug(req.slug()) > 0) throw BusinessException.templateSlugConflict();
-        if (req.schemaJson() == null || req.schemaJson().isBlank()) throw BusinessException.templateSchemaEmpty();
-
-        Instant now = Instant.now();
-        String tplId = UUID.randomUUID().toString();
-
-        Template t = new Template();
-        t.setId(tplId);
-        t.setSlug(req.slug());
-        t.setName(req.name());
-        t.setCategory(req.category());
-        t.setDescription(req.description());
-        t.setThumbnail(req.thumbnail() != null ? req.thumbnail() : "📄");
-        t.setAuthorId(UserContext.getUserId()); // 预留 UGC
-        t.setStatus(TemplateAggregate.STATUS_DRAFT);
-        t.setLatestVersion(1);
-        t.setCreatedAt(now);
-        t.setUpdatedAt(now);
-        templateMapper.insert(t);
-
-        // 初始版本快照
-        TemplateVersion v = new TemplateVersion();
-        v.setId(UUID.randomUUID().toString());
-        v.setTemplateId(tplId);
-        v.setVersion(1);
-        v.setSchemaJson(req.schemaJson());
-        v.setChangeNote(req.changeNote() != null ? req.changeNote() : "初始版本");
-        v.setCreatedAt(now);
-        versionMapper.insert(v);
-
-        return TemplateResponse.fromEntity(t, 0);
+        // 工厂内含 slug/category 校验 + schema 非空校验 + 初始版本快照
+        TemplateAggregate agg = TemplateAggregate.newTemplate(
+                UUID.randomUUID().toString(), req.slug(), req.name(), req.category(),
+                req.description(), req.thumbnail(), UserContext.getUserId(),
+                req.schemaJson(), req.changeNote());
+        templateMapper.insert(agg.toTemplate());
+        versionMapper.insert(agg.pendingNewVersion());
+        agg.clearPendingNewVersion();
+        return TemplateResponse.fromEntity(agg.toTemplate(), 0);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -127,30 +103,25 @@ public class TemplateService {
             throw BusinessException.templateSlugConflict();
         }
 
-        t.setSlug(req.slug());
-        t.setName(req.name());
-        t.setCategory(req.category());
-        t.setDescription(req.description());
-        t.setThumbnail(req.thumbnail());
-        t.setUpdatedAt(Instant.now());
-        templateMapper.update(t);
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        agg.toTemplate().setSlug(req.slug());
+        agg.toTemplate().setName(req.name());
+        agg.toTemplate().setCategory(req.category());
+        agg.toTemplate().setDescription(req.description());
+        agg.toTemplate().setThumbnail(req.thumbnail());
+        agg.toTemplate().setUpdatedAt(Instant.now());
 
-        // schema 变更则产生新版本
+        // schema 变更经聚合根 updateSchema（产新版本）
         if (req.schemaJson() != null && !req.schemaJson().isBlank()) {
-            int newVersion = t.getLatestVersion() + 1;
-            TemplateVersion v = new TemplateVersion();
-            v.setId(UUID.randomUUID().toString());
-            v.setTemplateId(id);
-            v.setVersion(newVersion);
-            v.setSchemaJson(req.schemaJson());
-            v.setChangeNote(req.changeNote());
-            v.setCreatedAt(Instant.now());
-            versionMapper.insert(v);
-            t.setLatestVersion(newVersion);
-            templateMapper.update(t);
+            agg.updateSchema(req.schemaJson(), req.changeNote());
+        }
+        templateMapper.update(agg.toTemplate());
+        if (agg.pendingNewVersion() != null) {
+            versionMapper.insert(agg.pendingNewVersion());
+            agg.clearPendingNewVersion();
         }
 
-        return TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(id));
+        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -160,59 +131,58 @@ public class TemplateService {
         templateMapper.deleteById(id); // template_versions FK CASCADE
     }
 
-    // === 状态机（发布/归档/推荐）===
+    // === 状态机（发布/归档/推荐，经聚合根实例方法）===
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse publish(String id) {
         Template t = templateMapper.getById(id);
         if (t == null) throw BusinessException.templateNotFound();
-        // 发布前校验 schema 存在
-        if (versionMapper.getLatestByTemplateId(id) == null) throw BusinessException.templateSchemaEmpty();
-        t.setStatus(TemplateAggregate.transitionStatus(t.getStatus(), TemplateAggregate.STATUS_PUBLISHED));
-        t.setUpdatedAt(Instant.now());
-        templateMapper.update(t);
-        return TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(id));
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        agg.publish(versionMapper.getLatestByTemplateId(id) != null);
+        templateMapper.update(agg.toTemplate());
+        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse archive(String id) {
         Template t = templateMapper.getById(id);
         if (t == null) throw BusinessException.templateNotFound();
-        t.setStatus(TemplateAggregate.transitionStatus(t.getStatus(), TemplateAggregate.STATUS_ARCHIVED));
-        t.setUpdatedAt(Instant.now());
-        templateMapper.update(t);
-        return TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(id));
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        agg.archive();
+        templateMapper.update(agg.toTemplate());
+        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TemplateResponse feature(String id) {
         Template t = templateMapper.getById(id);
         if (t == null) throw BusinessException.templateNotFound();
-        t.setStatus(TemplateAggregate.transitionStatus(t.getStatus(), TemplateAggregate.STATUS_FEATURED));
-        t.setUpdatedAt(Instant.now());
-        templateMapper.update(t);
-        return TemplateResponse.fromEntity(t, installationMapper.countByTemplateId(id));
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        agg.feature();
+        templateMapper.update(agg.toTemplate());
+        return TemplateResponse.fromEntity(agg.toTemplate(), installationMapper.countByTemplateId(id));
     }
 
-    // === 安装（跨聚合：Template → Page）===
+    // === 安装（跨聚合解耦：发布 TemplateInstalledEvent，handler 创建 page + installation 审计）===
 
     /**
-     * 安装模板：把模板 schema 拷贝为目标 site 下的新 draft Page。
-     * 复用 PageService.create（含 path 冲突校验 + 版本快照）。
+     * 安装模板：发布 TemplateInstalledEvent（v2 解耦，替代直接调 PageService.create 的反模式）。
+     *
+     * <p>聚合根校验 marketplace 可见性 + 发事件。TemplateInstallHandler 消费事件，
+     * 在 REQUIRES_NEW 事务创建 draft Page 并写 installation 审计（pageId 同步可得）。
+     *
+     * <p>pageId 不再同步返回（page 异步创建）：InstallResult 返回 path（确定性，前端导航用）+ version。
      */
     @Transactional(rollbackFor = Exception.class)
     public InstallResult install(String templateId, TemplateInstallRequest req) {
         Template t = templateMapper.getById(templateId);
         if (t == null) throw BusinessException.templateNotFound();
-        if (!TemplateAggregate.isMarketplaceVisible(t.getStatus())) throw BusinessException.templateNotPublished();
 
-        // 取指定版本或最新版
         TemplateVersion v = req.version() != null
                 ? versionMapper.getByTemplateIdAndVersion(templateId, req.version())
                 : versionMapper.getLatestByTemplateId(templateId);
         if (v == null) throw BusinessException.templateSchemaEmpty();
 
-        // 解析 schema JSON
         JsonNode schemaNode;
         try {
             schemaNode = objectMapper.readTree(v.getSchemaJson());
@@ -220,28 +190,19 @@ public class TemplateService {
             throw BusinessException.templateSchemaEmpty();
         }
 
-        // 目标 path 默认 /templates/{slug}
         String path = req.path() != null && !req.path().isBlank()
                 ? req.path()
                 : "/templates/" + t.getSlug();
 
-        // 复用 PageService.create 创建 draft Page（含 path 冲突校验 + 版本快照）
-        var page = pageService.create(req.siteId(), t.getName(), path, "draft", schemaNode, null);
+        // 聚合根校验 + 发事件（跨聚合解耦）
+        TemplateAggregate agg = TemplateAggregate.reconstitute(t);
+        agg.install(schemaNode, req.siteId(), t.getName(), path, v.getVersion());
+        templateMapper.update(agg.toTemplate());   // 触发 updatedAt（即使无字段变更，保持原行为）
+        agg.pullEvents().forEach(eventPublisher::publishEvent);
 
-        // 记安装审计
-        TemplateInstallation inst = new TemplateInstallation();
-        inst.setId(UUID.randomUUID().toString());
-        inst.setTemplateId(templateId);
-        inst.setVersion(v.getVersion());
-        inst.setSiteId(req.siteId());
-        inst.setPageId(page.id());
-        inst.setInstallerId(UserContext.getUserId());
-        inst.setCreatedAt(Instant.now());
-        installationMapper.insert(inst);
-
-        return new InstallResult(page.id(), page.path(), v.getVersion());
+        return new InstallResult(path, v.getVersion());
     }
 
-    /** 安装结果。 */
-    public record InstallResult(String pageId, String path, int version) {}
+    /** 安装结果。pageId 异步生成（由 handler 创建 page），此处返回 path 供前端导航 + version。 */
+    public record InstallResult(String path, int version) {}
 }

@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.domain.event.TemplateInstalledEvent;
 import com.luban.backend.shared.entity.Page;
+import com.luban.backend.shared.entity.TemplateInstallation;
 import com.luban.backend.shared.mapper.PageMapper;
+import com.luban.backend.shared.mapper.TemplateInstallationMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,16 +29,17 @@ import static org.mockito.Mockito.verify;
 class TemplateInstallHandlerTest {
 
     @Mock private PageMapper pageMapper;
+    @Mock private TemplateInstallationMapper installationMapper;
 
     private TemplateInstallHandler handler;
 
     @BeforeEach
     void setUp() {
-        handler = new TemplateInstallHandler(pageMapper);
+        handler = new TemplateInstallHandler(pageMapper, installationMapper);
     }
 
     @Test
-    void createsDraftPageFromTemplateEvent() throws Exception {
+    void createsDraftPageAndInstallationFromTemplateEvent() throws Exception {
         ObjectMapper om = new ObjectMapper();
         JsonNode schema = om.readTree("{\"components\":[]}");
         TemplateInstalledEvent event = new TemplateInstalledEvent(
@@ -44,17 +47,22 @@ class TemplateInstallHandlerTest {
 
         handler.on(event);
 
-        ArgumentCaptor<Page> captor = ArgumentCaptor.forClass(Page.class);
-        verify(pageMapper).insert(captor.capture());
-        Page saved = captor.getValue();
+        ArgumentCaptor<Page> pageCaptor = ArgumentCaptor.forClass(Page.class);
+        verify(pageMapper).insert(pageCaptor.capture());
+        Page saved = pageCaptor.getValue();
         assertThat(saved.getSiteId()).isEqualTo("site-1");
         assertThat(saved.getPath()).isEqualTo("/landing-a");
-        assertThat(saved.getName()).isEqualTo("落地页A");   // 关键：name 字段（非 title）
+        assertThat(saved.getName()).isEqualTo("落地页A");   // name 字段（非 title）
         assertThat(saved.getStatus()).isEqualTo("draft");
         assertThat(saved.getSchemaJson()).isEqualTo("{\"components\":[]}");
-        assertThat(saved.getId()).isNotBlank();
-        assertThat(saved.getCreatedAt()).isNotNull();
-        assertThat(saved.getUpdatedAt()).isNotNull();
+
+        // installation 审计行也由 handler 写入（pageId 同步可得）
+        ArgumentCaptor<TemplateInstallation> instCaptor = ArgumentCaptor.forClass(TemplateInstallation.class);
+        verify(installationMapper).insert(instCaptor.capture());
+        TemplateInstallation inst = instCaptor.getValue();
+        assertThat(inst.getTemplateId()).isEqualTo("tmpl-1");
+        assertThat(inst.getSiteId()).isEqualTo("site-1");
+        assertThat(inst.getPageId()).isEqualTo(saved.getId());
     }
 
     @Test

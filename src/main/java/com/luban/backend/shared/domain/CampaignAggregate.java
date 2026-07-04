@@ -1,34 +1,42 @@
 package com.luban.backend.shared.domain;
 
+import com.luban.backend.shared.domain.event.DomainEvent;
 import com.luban.backend.shared.entity.Campaign;
 import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.exception.BusinessException;
 
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
- * Campaign 聚合根（app-deeplink-backend-arch plan T7）。
+ * Campaign 聚合根（backend-ddd-refactor plan v2 T10，重写静态工具类为真聚合根）。
  *
- * <p>封装 Campaign + Channel 的领域不变量与状态机。聚合外的代码（controller/service）
- * 通过聚合根操作 Channel，不直接改 Channel 实体。
+ * <p>v2 纠正（对齐 {@code .agents/rules/luban-engineering-principles.md} §2 反模式）：
+ * 旧版 CampaignAggregate 是全 static 工具类（无状态、操作外部 entity）——属"静态工具类伪装聚合根"反模式。
+ * 重写为真聚合根：final + 持有 Campaign 实体引用 + 充血实例方法 + 工厂 + pullEvents。
  *
- * <p><b>不变量</b>：
+ * <p><b>实例方法封装的不变量</b>（真聚合根职责）：
  * <ul>
- *   <li>channel.siteId 必须 = campaign.siteId（若 channel 挂活动）</li>
- *   <li>channel.code 非空且符合 [a-zA-Z0-9_-]{1,32}（短码格式）</li>
- *   <li>channel.shortUrl = channel.code（短链路径即短码）</li>
- *   <li>campaign 时间窗 endAt >= startAt（若都提供）</li>
+ *   <li>工厂 newCampaign：初始 status=planned，时间窗校验 endAt&gt;=startAt</li>
+ *   <li>transition：状态机 planned→active→completed/cancelled（planned→cancelled 允许直跳），
+ *       非法转换抛 invalidStateTransition</li>
+ *   <li>update：patch 语义 + 时间窗校验</li>
+ *   <li>assertDeletable：有 channel 抛 CAMPAIGN_HAS_CHANNELS（跨聚合查询由 Service 传入 boolean）</li>
  * </ul>
  *
- * <p><b>状态机</b>：
+ * <p><b>保留为 static 的无状态工具</b>（合法领域工厂/纯函数，非反模式——反模式特指聚合根不变量写成
+ * static 操作外部 entity，而非无状态纯函数）：
  * <ul>
- *   <li>Campaign: planned → active → completed/cancelled</li>
- *   <li>Channel: active ↔ inactive</li>
+ *   <li>{@link #CODE_PATTERN} / {@link ChannelType}：常量/枚举</li>
+ *   <li>{@link #validateAndResolveCode}：channel 短码校验+生成（无状态，被独立 channel 也复用）</li>
+ *   <li>{@link #newChannel}：channel 实体工厂；{@link #transitionChannel}：channel 状态机</li>
  * </ul>
- *
- * <p>纯领域类，不依赖 Spring；由 operatorside 的 ChannelService/CampaignService 使用。
+ * 独立 channel（campaignId=null）的领域逻辑保留 static——channel 可作独立聚合根（plan 未要求
+ * ChannelAggregate，此处不为它单独建聚合，避免 scope 膨胀）。
  */
-public class CampaignAggregate {
+public final class CampaignAggregate {
 
     /** Channel 短码格式白名单（防恶意注入，对齐 plan 敏感字段清单） */
     public static final String CODE_PATTERN = "^[a-zA-Z0-9_-]{1,32}$";
@@ -42,29 +50,105 @@ public class CampaignAggregate {
         public static final String MINIAPP = "miniapp";
     }
 
-    // ===== Campaign 状态机 =====
+    // === 状态常量 ===
+    public static final String STATUS_PLANNED = "planned";
+    public static final String STATUS_ACTIVE = "active";
+    public static final String STATUS_COMPLETED = "completed";
+    public static final String STATUS_CANCELLED = "cancelled";
 
-    /**
-     * Campaign 状态转换。非法转换抛 BusinessException。
-     * planned → active → completed/cancelled；active → cancelled。
-     */
-    public static void transitionCampaign(Campaign campaign, String targetStatus) {
-        String current = campaign.getStatus();
-        boolean valid =
-                ("planned".equals(current) && "active".equals(targetStatus)) ||
-                ("active".equals(current) && "completed".equals(targetStatus)) ||
-                ("active".equals(current) && "cancelled".equals(targetStatus)) ||
-                ("planned".equals(current) && "cancelled".equals(targetStatus));
-        if (!valid) {
-            throw BusinessException.invalidStateTransition(current, targetStatus);
+    private final Campaign root;
+    private final List<Channel> channelList;
+    private final List<DomainEvent> events = new ArrayList<>();
+
+    private CampaignAggregate(Campaign root, List<Channel> channels) {
+        this.root = root;
+        this.channelList = channels != null ? new ArrayList<>(channels) : new ArrayList<>();
+    }
+
+    /** 工厂：创建新活动（初始 status=planned，时间窗校验）。 */
+    public static CampaignAggregate newCampaign(String id, String siteId, String name,
+                                                Instant startAt, Instant endAt) {
+        validateCampaignCreate(name, startAt, endAt);
+        Instant now = Instant.now();
+        Campaign c = new Campaign();
+        c.setId(id);
+        c.setSiteId(siteId);
+        c.setName(name);
+        c.setStartAt(startAt);
+        c.setEndAt(endAt);
+        c.setStatus(STATUS_PLANNED);
+        c.setCreatedAt(now);
+        c.setUpdatedAt(now);
+        return new CampaignAggregate(c, null);
+    }
+
+    /** 工厂：从持久化重建（含聚合内 channels）。 */
+    public static CampaignAggregate reconstitute(Campaign persisted, List<Channel> channels) {
+        return new CampaignAggregate(persisted, channels);
+    }
+
+    /** Patch 更新活动（null 字段保留原值，时间窗校验）。 */
+    public void update(String name, Instant startAt, Instant endAt) {
+        if (name != null) root.setName(name);
+        if (startAt != null) root.setStartAt(startAt);
+        if (endAt != null) root.setEndAt(endAt);
+        Instant s = root.getStartAt();
+        Instant e = root.getEndAt();
+        if (s != null && e != null && e.isBefore(s)) {
+            throw BusinessException.invalidTimeWindow();
         }
-        campaign.setStatus(targetStatus);
+        root.setUpdatedAt(Instant.now());
     }
 
     /**
-     * 校验 Campaign 创建参数。endAt >= startAt（若都提供）。
+     * 状态转换（聚合根状态机）。非法转换抛 invalidStateTransition。
+     * planned→active→completed/cancelled；planned→cancelled（直跳）；active→cancelled。
      */
-    public static void validateCampaignCreate(String name, java.time.Instant startAt, java.time.Instant endAt) {
+    public void transition(String targetStatus) {
+        String current = root.getStatus();
+        boolean valid =
+                (STATUS_PLANNED.equals(current) && STATUS_ACTIVE.equals(targetStatus)) ||
+                (STATUS_ACTIVE.equals(current) && STATUS_COMPLETED.equals(targetStatus)) ||
+                (STATUS_ACTIVE.equals(current) && STATUS_CANCELLED.equals(targetStatus)) ||
+                (STATUS_PLANNED.equals(current) && STATUS_CANCELLED.equals(targetStatus));
+        if (!valid) {
+            throw BusinessException.invalidStateTransition(current, targetStatus);
+        }
+        root.setStatus(targetStatus);
+        root.setUpdatedAt(Instant.now());
+    }
+
+    /**
+     * 断言可删除：有 channel 抛 CAMPAIGN_HAS_CHANNELS。
+     * 跨聚合查询（channelMapper.listByCampaignId）由 Service 完成后传入 boolean。
+     */
+    public void assertDeletable(boolean hasChannels) {
+        if (hasChannels) {
+            throw BusinessException.campaignHasChannels();
+        }
+    }
+
+    public Campaign toCampaign() {
+        return root;
+    }
+
+    /** 聚合内 channels 视图（不可变）。 */
+    public List<Channel> channels() {
+        return List.copyOf(channelList);
+    }
+
+    public List<DomainEvent> pullEvents() {
+        List<DomainEvent> drained = new ArrayList<>(events);
+        events.clear();
+        return drained;
+    }
+
+    // ===== 无状态静态工具（合法领域工厂/纯函数，非"静态类伪装聚合根"反模式） =====
+
+    /**
+     * 校验 Campaign 创建参数。endAt &gt;= startAt（若都提供）。
+     */
+    public static void validateCampaignCreate(String name, Instant startAt, Instant endAt) {
         if (name == null || name.isBlank()) {
             throw BusinessException.missingField("name");
         }
@@ -73,10 +157,27 @@ public class CampaignAggregate {
         }
     }
 
-    // ===== Channel 状态机 =====
+    /**
+     * 校验 Channel 创建参数 + 生成短码/shortUrl（无状态纯函数，独立 channel 与挂活动的 channel 共用）。
+     */
+    public static String validateAndResolveCode(String siteId, String code, String targetPageId, String pageSiteId) {
+        if (targetPageId == null || targetPageId.isBlank()) {
+            throw BusinessException.missingField("targetPageId");
+        }
+        if (!siteId.equals(pageSiteId)) {
+            throw BusinessException.pageNotBelongToSite();
+        }
+        if (code == null || code.isBlank()) {
+            return generateBase62Code();
+        }
+        if (!code.matches(CODE_PATTERN)) {
+            throw BusinessException.invalidCodeFormat();
+        }
+        return code;
+    }
 
     /**
-     * Channel 状态转换。active ↔ inactive；其他转换拒绝。
+     * Channel 状态转换（active↔inactive）。无状态纯函数，channel 可作独立聚合根。
      */
     public static void transitionChannel(Channel channel, String targetStatus) {
         String current = channel.getStatus();
@@ -90,36 +191,6 @@ public class CampaignAggregate {
     }
 
     /**
-     * 校验 Channel 创建参数 + 生成短码/shortUrl。
-     *
-     * @param siteId        站点 ID
-     * @param code          运营指定的短码（null 则系统生成 base62）
-     * @param targetPageId  目标页面 ID
-     * @param pageSiteId    目标页面实际所属站点 ID（用于校验归属）
-     * @return 最终短码（= shortUrl）
-     */
-    public static String validateAndResolveCode(String siteId, String code, String targetPageId, String pageSiteId) {
-        // page 归属校验（防开放重定向，OWASP A08）
-        if (targetPageId == null || targetPageId.isBlank()) {
-            throw BusinessException.missingField("targetPageId");
-        }
-        if (!siteId.equals(pageSiteId)) {
-            throw BusinessException.pageNotBelongToSite();
-        }
-        // code：运营指定 or 系统生成
-        String resolved;
-        if (code == null || code.isBlank()) {
-            resolved = generateBase62Code();
-        } else {
-            if (!code.matches(CODE_PATTERN)) {
-                throw BusinessException.invalidCodeFormat();
-            }
-            resolved = code;
-        }
-        return resolved;
-    }
-
-    /**
      * 构建待持久化的 Channel 实体（设置 id/默认状态/shortUrl=code）。
      */
     public static Channel newChannel(String siteId, String campaignId, String code, String type,
@@ -129,7 +200,7 @@ public class CampaignAggregate {
         ch.setSiteId(siteId);
         ch.setCampaignId(campaignId);
         ch.setCode(code);
-        ch.setShortUrl(code); // shortUrl = code（plan 决策 2）
+        ch.setShortUrl(code);
         ch.setType(type);
         ch.setUtmTemplate(utmTemplate);
         ch.setTargetPageId(targetPageId);
@@ -141,9 +212,7 @@ public class CampaignAggregate {
     private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
 
     /**
-     * base62 短码生成（6 位，[0-9a-zA-Z]）。
-     * 用 SecureRandom 逐位独立均匀采样，消除偏置 + 避免 Math.abs(Long.MIN_VALUE) 边界 bug。
-     * 碰撞由 DB 唯一约束（uk_short_url + uk_site_code）兜底，调用方捕获重试。
+     * base62 短码生成（6 位，[0-9a-zA-Z]）。碰撞由 DB 唯一约束兜底，调用方捕获重试。
      */
     private static String generateBase62Code() {
         char[] buf = new char[6];
