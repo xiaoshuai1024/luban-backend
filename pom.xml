@@ -109,10 +109,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- 注：@{argLine}（JaCoCo agent）与 byte-buddy-agent 在同一 JVM 冲突
-                         （Mockito inline mock maker 失败）。当前 surefire 用 byte-buddy（单测需要 Mockito）。
-                         JaCoCo 覆盖率改为通过 failsafe（集成测试）或 CI 独立运行收集。 -->
-                    <argLine>-Xmx1024m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m -javaagent:${project.build.directory}/byte-buddy-agent.jar</argLine>
+                    <!-- @{argLine} = JaCoCo prepare-agent 注入的 agent（覆盖率收集）。
+                         Mockito 5.x inline mock maker 自动 self-attach byte-buddy-agent，无需手动 -javaagent。
+                         两者不再冲突（v2 DDD plan T1 修复）。 -->
+                    <argLine>@{argLine} -Xmx1024m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m</argLine>
                     <forkCount>1</forkCount>
                     <reuseForks>true</reuseForks>
                     <includes>
@@ -130,7 +130,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <configuration>
-                    <argLine>-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m -javaagent:${project.build.directory}/byte-buddy-agent.jar</argLine>
+                    <argLine>@{argLine} -Xmx512m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m</argLine>
                     <forkCount>1</forkCount>
                     <reuseForks>true</reuseForks>
                     <includes>
@@ -165,8 +165,9 @@
                             <goal>report</goal>
                         </goals>
                     </execution>
-                    <!-- Wave 1: 覆盖率报告生成（check 暂设 0%，Wave 3 补测试后提升到 80%）
-                         注：surefire 用 byte-buddy agent（Mockito），JaCoCo agent 通过 failsafe 注入 -->
+                    <!-- T2（DDD plan）：80% 行覆盖率门禁。
+                         排除 dto（record）/entity（POJO）/config/Application（启动类）等无业务逻辑代码。
+                         先 haltOnFailure=false 测基线，补完测试后设 true。 -->
                     <execution>
                         <id>check-coverage</id>
                         <phase>verify</phase>
@@ -175,6 +176,12 @@
                         </goals>
                         <configuration>
                             <haltOnFailure>false</haltOnFailure>
+                            <excludes>
+                                <exclude>com/luban/backend/LubanBackendApplication*</exclude>
+                                <exclude>com/luban/backend/**/dto/**</exclude>
+                                <exclude>com/luban/backend/**/entity/**</exclude>
+                                <exclude>com/luban/backend/**/config/**</exclude>
+                            </excludes>
                             <rules>
                                 <rule>
                                     <element>BUNDLE</element>
@@ -182,7 +189,17 @@
                                         <limit>
                                             <counter>LINE</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.00</minimum>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
                                         </limit>
                                     </limits>
                                 </rule>

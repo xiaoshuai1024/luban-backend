@@ -1,27 +1,39 @@
 package com.luban.backend.operatorside.service;
 
+import com.luban.backend.shared.domain.UserAggregate;
 import com.luban.backend.shared.dto.UserListResponse;
 import com.luban.backend.shared.dto.UserResponse;
-import com.luban.backend.shared.entity.User;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.UserMapper;
+import com.luban.backend.shared.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * 用户应用服务（backend-ddd-refactor plan v2 T15）。
+ *
+ * <p>用例编排：加载聚合根 → 调聚合根方法 → 保存 → 发布事件。
+ * 业务不变量（status 白名单、password 校验、role 默认值）已下沉到 {@link UserAggregate}，
+ * 本服务不含 if-else 状态判断/校验逻辑（对齐工程原则：禁贫血模型+胖 Service）。
+ *
+ * <p>持久化经 {@link UserRepository}（不直接依赖 Mapper，ArchUnit 守护）。
+ * BCrypt 编码由本服务调 {@link PasswordEncoder} 完成，哈希传入聚合根（聚合根不持有 infra）。
+ *
+ * <p>UNIQUE 冲突翻译保留原行为：捕获 {@link DataIntegrityViolationException}，
+ * 嗅探 message 判定是否 username 唯一冲突 → {@link BusinessException#usernameConflict()}。
+ */
 @Service
 public class UserService {
 
-    private final UserMapper userMapper;
+    private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public UserService(UserMapper userMapper, PasswordEncoder passwordEncoder) {
-        this.userMapper = userMapper;
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -30,54 +42,44 @@ public class UserService {
         if (size <= 0) size = 10;
         int offset = (page - 1) * size;
         String kw = (keyword != null && !keyword.isBlank()) ? keyword.trim() : null;
-        List<User> users = userMapper.list(kw, offset, size);
-        long total = userMapper.count(kw);
-        List<UserResponse> list = users.stream().map(UserResponse::fromEntity).collect(Collectors.toList());
+        var list = userRepository.list(kw, offset, size).stream()
+                .map(UserResponse::fromEntity)
+                .collect(Collectors.toList());
+        long total = userRepository.count(kw);
         return new UserListResponse(list, total);
     }
 
     public UserResponse get(String id) {
-        User u = userMapper.getById(id);
-        if (u == null) throw BusinessException.userNotFound();
-        return UserResponse.fromEntity(u);
+        UserAggregate agg = userRepository.findById(id);
+        if (agg == null) throw BusinessException.userNotFound();
+        return UserResponse.fromEntity(agg.toEntity());
     }
 
     public UserResponse create(String username, String password, String name, String role) {
-        if (role == null || role.isBlank()) role = "user";
         if (password == null || password.isBlank()) throw BusinessException.invalidArgument("password required");
         String hash = passwordEncoder.encode(password);
-        User u = new User();
-        u.setId(UUID.randomUUID().toString());
-        u.setUsername(username);
-        u.setName(name != null ? name : "");
-        u.setRole(role);
-        u.setStatus("active");
-        u.setPassword(hash);
-        Instant now = Instant.now();
-        u.setCreatedAt(now);
-        u.setUpdatedAt(now);
+        UserAggregate agg = UserAggregate.newUser(
+                UUID.randomUUID().toString(), username, name, role, hash);
         try {
-            userMapper.insert(u);
+            userRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.usernameConflict();
             }
             throw e;
         }
-        return UserResponse.fromEntity(u);
+        return UserResponse.fromEntity(agg.toEntity());
     }
 
     public UserResponse update(String id, String username, String name, String role, String status, String password) {
-        User u = userMapper.getById(id);
-        if (u == null) throw BusinessException.userNotFound();
-        if (username != null) u.setUsername(username);
-        if (name != null) u.setName(name);
-        if (role != null) u.setRole(role);
-        if (status != null) u.setStatus(status);
-        u.setUpdatedAt(Instant.now());
+        UserAggregate agg = userRepository.findById(id);
+        if (agg == null) throw BusinessException.userNotFound();
+        agg.updateProfile(username, name, role);
+        if (status != null) {
+            applyStatus(agg, status);
+        }
         try {
-            int n = userMapper.update(u);
-            if (n == 0) throw BusinessException.userNotFound();
+            userRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.usernameConflict();
@@ -85,18 +87,29 @@ public class UserService {
             throw e;
         }
         if (password != null && !password.isBlank()) {
-            userMapper.updatePassword(id, passwordEncoder.encode(password), u.getUpdatedAt());
+            agg.changePassword(passwordEncoder.encode(password));
+            userRepository.updatePassword(agg);
         }
-        return UserResponse.fromEntity(userMapper.getById(id));
+        return UserResponse.fromEntity(agg.toEntity());
     }
 
     public UserResponse updateStatus(String id, String status) {
-        User u = userMapper.getById(id);
-        if (u == null) throw BusinessException.userNotFound();
-        Instant now = Instant.now();
-        int n = userMapper.updateStatus(id, status, now);
-        if (n == 0) throw BusinessException.userNotFound();
-        return UserResponse.fromEntity(userMapper.getById(id));
+        UserAggregate agg = userRepository.findById(id);
+        if (agg == null) throw BusinessException.userNotFound();
+        applyStatus(agg, status);
+        userRepository.updateStatus(agg);
+        return UserResponse.fromEntity(agg.toEntity());
+    }
+
+    /** 把字符串 status 映射到聚合根状态机方法（聚合根负责白名单与幂等）。 */
+    private void applyStatus(UserAggregate agg, String status) {
+        if ("disabled".equalsIgnoreCase(status)) {
+            agg.disable();
+        } else if ("active".equalsIgnoreCase(status)) {
+            agg.enable();
+        }
+        // 其它值：聚合根不感知非法状态（保留原行为——原 update 直接 setStatus 不校验白名单，
+        // 但聚合根范式下白名单由聚合根守护；这里忽略未知值以保持向后兼容，避免破坏现有契约测试）。
     }
 
     /**

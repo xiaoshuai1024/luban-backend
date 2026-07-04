@@ -2,13 +2,13 @@ package com.luban.backend.operatorside.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.luban.backend.shared.domain.DatasourceAggregate;
 import com.luban.backend.shared.dto.DatasourceResponse;
 import com.luban.backend.shared.dto.DatasourceTestResult;
 import com.luban.backend.shared.entity.Datasource;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.DatasourceMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.DatasourceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -20,45 +20,48 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Datasource CRUD + connection test. Aligned with luban-backend-go
- * internal/service/datasource_service.go (same {@code type} whitelist, same
- * DATASOURCE_NAME_CONFLICT/SITE_NOT_FOUND/DATASOURCE_NOT_FOUND error codes, same
- * TestConnection return shape).
+ * 数据源应用服务（backend-ddd-refactor plan v2 T11）。
  *
- * <p>Multi-tenant isolation: {@code get}/{@code update}/{@code delete} accept a
- * {@code siteId} and scope the row at the SQL layer (see {@link DatasourceMapper}).
- * When the API caller omits {@code siteId}, the service falls back to the id-only
- * lookup (admin/internal paths) rather than rejecting the call — preserving backward
- * compatibility with the existing contract tests.
+ * <p>用例编排：加载聚合根 → 调聚合根方法 → 保存。
+ * 业务不变量（type 白名单）已下沉到 {@link DatasourceAggregate}。
  *
- * <p>{@code testConnection} only applies to type={@code api} (HTTP GET against the
- * configured {@code url}). For {@code static} datasources there is no remote to
- * probe — we return ok=true with latency 0 immediately, matching the Go backend.
+ * <p><b>留在本 Service 的逻辑（属 infra，不进聚合根）</b>：
+ * <ul>
+ *   <li>{@code testConnection}：HTTP GET 探测（网络 IO，聚合根零 infra 依赖）</li>
+ *   <li>{@code configToJson}：JsonNode→String 序列化（依赖 ObjectMapper）</li>
+ *   <li>{@code isDuplicate} 翻译：DataIntegrityViolationException→DATASOURCE_NAME_CONFLICT</li>
+ *   <li>SITE_NOT_FOUND 校验：跨聚合查询（SiteMapper，对齐 TemplateService 范式）</li>
+ * </ul>
+ *
+ * <p>持久化经 {@link DatasourceRepository}（不直接依赖 Mapper 做 CRUD，
+ * 但 {@code testConnection} 的 getById 用 Mapper 直接读——testConnection 无 siteId 参数，
+ * 是 admin 内部路径，且需保持"无 @Transactional"约束，故直接用 Mapper 读取避免事务注解干扰）。
+ *
+ * <p>多租户守卫回退：siteId 为空时回退 id-only（admin 兼容路径，{@code DatasourceContractTest} 锁定）。
+ *
+ * <p>Aligned with luban-backend-go (same type whitelist, error codes, TestConnection shape).
  */
 @Service
 public class DatasourceService {
 
     private static final Logger log = LoggerFactory.getLogger(DatasourceService.class);
 
-    /** Whitelist enforced identically on both backends (plan §3). */
-    static final Set<String> ALLOWED_TYPES = Set.of("static", "api");
-
     private static final int TEST_TIMEOUT_SECONDS = 5;
 
-    private final DatasourceMapper datasourceMapper;
+    private final DatasourceRepository datasourceRepository;
+    // SiteMapper 用于 SITE_NOT_FOUND 跨聚合校验（对齐 TemplateService 范式，
+    // Site 是种子数据查询，非聚合根写不变量，保留在 Service 层）。
     private final SiteMapper siteMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public DatasourceService(DatasourceMapper datasourceMapper, SiteMapper siteMapper) {
-        this.datasourceMapper = datasourceMapper;
+    public DatasourceService(DatasourceRepository datasourceRepository,
+                             SiteMapper siteMapper) {
+        this.datasourceRepository = datasourceRepository;
         this.siteMapper = siteMapper;
     }
 
@@ -68,35 +71,26 @@ public class DatasourceService {
             throw BusinessException.invalidArgument("siteId is required");
         }
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
-        return datasourceMapper.listBySiteId(siteId).stream()
+        return datasourceRepository.listBySiteId(siteId).stream()
                 .map(DatasourceResponse::fromEntity)
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public DatasourceResponse get(String id, String siteId) {
-        Datasource d = (siteId == null || siteId.isBlank())
-                ? datasourceMapper.getById(id)
-                : datasourceMapper.getByIdAndSiteId(id, siteId);
-        if (d == null) throw BusinessException.datasourceNotFound();
-        return DatasourceResponse.fromEntity(d);
+        DatasourceAggregate agg = datasourceRepository.findById(id, siteId);
+        if (agg == null) throw BusinessException.datasourceNotFound();
+        return DatasourceResponse.fromEntity(agg.toEntity());
     }
 
     @Transactional(rollbackFor = Exception.class)
     public DatasourceResponse create(String siteId, String name, String type, JsonNode config) {
-        validateType(type);
         if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
-        Datasource ds = new Datasource();
-        ds.setId(UUID.randomUUID().toString());
-        ds.setSiteId(siteId);
-        ds.setName(name);
-        ds.setType(type);
-        ds.setConfigJson(configToJson(config, true));
-        Instant now = Instant.now();
-        ds.setCreatedAt(now);
-        ds.setUpdatedAt(now);
+        // type 白名单由聚合根工厂校验（非法值抛 INVALID_ARGUMENT）
+        DatasourceAggregate agg = DatasourceAggregate.newDatasource(
+                UUID.randomUUID().toString(), siteId, name, type, configToJson(config, true));
         try {
-            datasourceMapper.insert(ds);
+            datasourceRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isDuplicate(e)) {
                 log.warn("datasource create rejected: name conflict (siteId={}, name={}, type={})", siteId, name, type);
@@ -104,43 +98,34 @@ public class DatasourceService {
             }
             throw e;
         }
-        log.info("datasource created (id={}, siteId={}, name={}, type={})", ds.getId(), siteId, name, type);
-        return DatasourceResponse.fromEntity(ds);
+        log.info("datasource created (id={}, siteId={}, name={}, type={})",
+                agg.toEntity().getId(), siteId, name, type);
+        return DatasourceResponse.fromEntity(agg.toEntity());
     }
 
     @Transactional(rollbackFor = Exception.class)
     public DatasourceResponse update(String id, String siteId, String name, String type, JsonNode config) {
-        validateType(type);
-        // Tenant guard: when siteId is supplied, scope the lookup; fall back to id-only
-        // for admin/internal callers (preserves backward compatibility with existing tests).
-        Datasource ds = (siteId == null || siteId.isBlank())
-                ? datasourceMapper.getById(id)
-                : datasourceMapper.getByIdAndSiteId(id, siteId);
-        if (ds == null) throw BusinessException.datasourceNotFound();
-        // site_id is immutable; ignore any caller-supplied siteId override.
-        ds.setName(name);
-        ds.setType(type);
-        ds.setConfigJson(configToJson(config, true));
-        ds.setUpdatedAt(Instant.now());
+        DatasourceAggregate agg = datasourceRepository.findById(id, siteId);
+        if (agg == null) throw BusinessException.datasourceNotFound();
+        // type 白名单由聚合根方法校验（非法值抛 INVALID_ARGUMENT，聚合根状态不变）
+        agg.update(name, type, configToJson(config, true));
         try {
-            int n = datasourceMapper.update(ds);
-            if (n == 0) throw BusinessException.datasourceNotFound();
+            datasourceRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isDuplicate(e)) {
-                log.warn("datasource update rejected: name conflict (id={}, siteId={}, name={})", id, ds.getSiteId(), name);
+                log.warn("datasource update rejected: name conflict (id={}, name={})", id, name);
                 throw BusinessException.datasourceNameConflict();
             }
             throw e;
         }
-        log.info("datasource updated (id={}, siteId={}, name={}, type={})", id, ds.getSiteId(), name, type);
-        return DatasourceResponse.fromEntity(ds);
+        Datasource saved = agg.toEntity();
+        log.info("datasource updated (id={}, siteId={}, name={}, type={})", id, saved.getSiteId(), name, type);
+        return DatasourceResponse.fromEntity(saved);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(String id, String siteId) {
-        int n = (siteId == null || siteId.isBlank())
-                ? datasourceMapper.deleteById(id)
-                : datasourceMapper.deleteByIdAndSiteId(id, siteId);
+        int n = datasourceRepository.delete(id, siteId);
         if (n == 0) throw BusinessException.datasourceNotFound();
         log.info("datasource deleted (id={}, siteId={})", id, siteId);
     }
@@ -158,12 +143,12 @@ public class DatasourceService {
      * and must not hold a DB transaction open across it.
      */
     public DatasourceTestResult testConnection(String id) {
-        Datasource ds = datasourceMapper.getById(id);
-        if (ds == null) throw BusinessException.datasourceNotFound();
-        if ("static".equals(ds.getType())) {
+        DatasourceAggregate agg = datasourceRepository.findByIdAdmin(id);
+        if (agg == null) throw BusinessException.datasourceNotFound();
+        if (agg.isStaticType()) {
             return new DatasourceTestResult(true, "static datasource: no remote to probe", 0L);
         }
-        JsonNode config = parseConfig(ds.getConfigJson());
+        JsonNode config = parseConfig(agg.getConfigJson());
         String url = config != null ? config.path("url").asText(null) : null;
         if (url == null || url.isBlank()) {
             throw BusinessException.datasourceConnectionFailed("config.url is required for api datasource");
@@ -205,12 +190,6 @@ public class DatasourceService {
         } catch (Exception e) {
             log.warn("datasource connection probe failed (id={}, host={}, err={})", id, uri.getHost(), e.getMessage());
             throw BusinessException.datasourceConnectionFailed(e.getMessage() != null ? e.getMessage() : "connection failed");
-        }
-    }
-
-    private void validateType(String type) {
-        if (type == null || !ALLOWED_TYPES.contains(type)) {
-            throw BusinessException.invalidArgument("type must be one of " + ALLOWED_TYPES);
         }
     }
 
