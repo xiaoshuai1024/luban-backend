@@ -265,12 +265,19 @@ public class AbService {
         return erfc(x);
     }
 
-    /** 互补误差函数 erfc 近似（Abramowitz-Stegun 7.1.26）。 */
+    /**
+     * 互补误差函数 erfc 近似（Abramowitz-Stegun 7.1.26）。
+     *
+     * <p>AS 7.1.26 标准形式给出 erf(x) = 1 - poly(t)*exp(-x²)。
+     * 故 erfc(x) = 1 - erf(x) = poly(t)*exp(-x²)。
+     * <p><b>修复（backend-ddd-refactor T16）</b>：旧实现返回 1-poly*exp 即 erf（方向反），
+     * 导致 pValue 偏大、显著差异被误判为不显著。修正为返回真正的 erfc。
+     */
     private static double erfc(double x) {
         double t = 1.0 / (1.0 + 0.3275911 * x);
         double poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741
                 + t * (-1.453152027 + t * 1.061405429))));
-        return 1.0 - poly * Math.exp(-x * x);
+        return poly * Math.exp(-x * x);
     }
 
     // ===== DTO records =====
