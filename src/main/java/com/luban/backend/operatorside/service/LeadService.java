@@ -1,9 +1,9 @@
 package com.luban.backend.operatorside.service;
 import com.luban.backend.shared.crypto.LeadCryptoService;
-import com.luban.backend.shared.support.LeadNotifyService;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
-import com.luban.backend.shared.domain.LeadStatusMachine;
+import com.luban.backend.shared.domain.LeadAggregate;
+import com.luban.backend.shared.domain.event.LeadSubmittedEvent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.dto.LeadResponse;
@@ -19,6 +19,7 @@ import com.luban.backend.shared.mapper.LeadAuditLogMapper;
 import com.luban.backend.shared.mapper.LeadMapper;
 import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.mapper.UserSiteMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,8 +30,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Lead 线索领域服务：留资提交编排（防刷→去重→加密→入库→通知）+ 线索中心读写 + 导出。
- * 编排逻辑通过 mock mapper/service 单测覆盖；DB 真实交互由集成测试覆盖。
+ * Lead 线索领域服务（backend-ddd-refactor plan v2 T7）。
+ *
+ * <p>留资提交编排（防刷→去重→加密→入库→通知事件）+ 线索中心读写 + 导出。
+ * 状态机/转换副作用下沉到 {@link LeadAggregate}（合并自删除的 LeadStatusMachine）。
+ * afterCommit 通知改为发布 {@link LeadSubmittedEvent}（LeadNotifyHandler AFTER_COMMIT 消费），
+ * 替代旧 TransactionSynchronizationManager 手动注册（更优雅、可测试、解耦）。
  */
 @Service
 public class LeadService implements LeadSubmissionPort {
@@ -48,18 +53,16 @@ public class LeadService implements LeadSubmissionPort {
     private final DedupService dedupService;
     private final AntiSpamService antiSpamService;
     private final LeadCryptoService cryptoService;
-    private final LeadStatusMachine statusMachine;
-    private final LeadNotifyService notifyService;
     private final QuotaService quotaService;
     private final UserSiteMapper userSiteMapper;
+    private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
                        LeadAuditLogMapper leadAuditMapper, TenantGuardService tenantGuard,
                        DedupService dedupService, AntiSpamService antiSpamService,
-                       LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
-                       LeadNotifyService notifyService, QuotaService quotaService,
-                       UserSiteMapper userSiteMapper) {
+                       LeadCryptoService cryptoService, QuotaService quotaService,
+                       UserSiteMapper userSiteMapper, ApplicationEventPublisher eventPublisher) {
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
         this.siteMapper = siteMapper;
@@ -68,10 +71,9 @@ public class LeadService implements LeadSubmissionPort {
         this.dedupService = dedupService;
         this.antiSpamService = antiSpamService;
         this.cryptoService = cryptoService;
-        this.statusMachine = statusMachine;
-        this.notifyService = notifyService;
         this.quotaService = quotaService;
         this.userSiteMapper = userSiteMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -127,8 +129,8 @@ public class LeadService implements LeadSubmissionPort {
                     String mergedUtm = mergeUtm(existing.getUtmJson(), req.utm());
                     leadMapper.updateContact(existing.getId(), existing.getSiteId(),
                             cryptoService.encrypt(toJson(mergedContact)), mergedUtm, Instant.now());
-                    // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚）
-                    registerAfterCommitNotify(existing.getId(), form);
+                    // 通知：发布 LeadSubmittedEvent（LeadNotifyHandler AFTER_COMMIT 消费，替代旧 afterCommit 钩子）
+                    publishLeadSubmitted(existing.getId(), form);
                     return new LeadSubmitResult(existing.getId(), existing.getStatus(), true);
                 }
             }
@@ -144,8 +146,8 @@ public class LeadService implements LeadSubmissionPort {
         lead.setContactJson(encryptedContact);
         lead.setUtmJson(toJson(req.utm()));
         lead.setStatus(decision == DedupService.Decision.MARK_DUPLICATE
-                ? LeadStatusMachine.Status.INVALID.name().toLowerCase()
-                : LeadStatusMachine.Status.NEW.name().toLowerCase());
+                ? LeadAggregate.Status.INVALID.name().toLowerCase()
+                : LeadAggregate.Status.NEW.name().toLowerCase());
         lead.setDedupHash(hash);
         lead.setSourceIp(req.ip());
         lead.setVisitorId(req.visitorId());
@@ -156,11 +158,11 @@ public class LeadService implements LeadSubmissionPort {
             leadMapper.insert(lead);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // OVERWRITE 并发竞争：降级为重复标记
-            lead.setStatus(LeadStatusMachine.Status.INVALID.name().toLowerCase());
+            lead.setStatus(LeadAggregate.Status.INVALID.name().toLowerCase());
         }
 
-        // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚 lead）
-        registerAfterCommitNotify(lead.getId(), form);
+        // 通知：发布 LeadSubmittedEvent（LeadNotifyHandler AFTER_COMMIT 消费，替代旧 afterCommit 钩子）
+        publishLeadSubmitted(lead.getId(), form);
 
         // v02 T-be-4：留资用量计数（站点 owner 配额）。超限由 QuotaService 抛 429。
         // 注意：在 insert 之后调用，超限会回滚整个事务（@Transactional）。
@@ -172,23 +174,14 @@ public class LeadService implements LeadSubmissionPort {
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
     }
 
-    /** 注册 afterCommit 回调：事务提交后发通知，失败不回滚 lead。 */
-    private void registerAfterCommitNotify(String leadId, Form form) {
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        try {
-                            Lead saved = leadMapper.getByIdAndSiteId(leadId, form.getSiteId());
-                            if (saved != null) notifyService.notifyNewLead(saved, form);
-                        } catch (Exception e) {
-                            // 通知失败不阻塞（lead 已提交）
-                        }
-                    }
-                }
-            );
-        }
+    /**
+     * 发布 LeadSubmittedEvent（事务提交后由 LeadNotifyHandler AFTER_COMMIT 消费）。
+     * 替代旧 TransactionSynchronizationManager.registerSynchronization afterCommit 手动注册
+     * ——更优雅、可测试、解耦（handler 已重载 lead+form 调 notifyService）。
+     */
+    private void publishLeadSubmitted(String leadId, Form form) {
+        eventPublisher.publishEvent(new LeadSubmittedEvent(
+                leadId, form.getId(), form.getSiteId(), Instant.now()));
     }
 
     /** 合并 utm：旧值 + 新值（新值覆盖同名 key）。 */
@@ -269,20 +262,19 @@ public class LeadService implements LeadSubmissionPort {
     @Transactional(rollbackFor = Exception.class)
     public LeadResponse transitStatus(String siteId, String leadId, String toStatusRaw, String actorId) {
         Lead lead = getOrThrow(siteId, leadId);
-        LeadStatusMachine.Status from = statusMachine.parse(lead.getStatus());
-        LeadStatusMachine.Status to = statusMachine.parse(toStatusRaw);
-        statusMachine.ensureValid(from, to);
-        Instant now = Instant.now();
-        Instant convertedAt = to == LeadStatusMachine.Status.CONVERTED ? now : lead.getConvertedAt();
-        String assignee = (to == LeadStatusMachine.Status.ASSIGNED && actorId != null) ? actorId : lead.getAssigneeId();
-        leadMapper.updateStatus(leadId, siteId, to.name().toLowerCase(), assignee, convertedAt, now);
-        lead.setStatus(to.name().toLowerCase());
-        lead.setAssigneeId(assignee);
-        lead.setConvertedAt(convertedAt);
-        // 审计：状态转移（plan §3.1 审计口径）
+        String fromStatus = lead.getStatus();
+        // 聚合根 transit：状态机校验 + 副作用（convertedAt/assigneeId）+ 事件（LeadConvertedEvent）
+        LeadAggregate agg = LeadAggregate.reconstitute(lead);
+        agg.transit(toStatusRaw, actorId);
+        Lead updated = agg.toLead();
+        leadMapper.updateStatus(leadId, siteId, updated.getStatus(), updated.getAssigneeId(),
+                updated.getConvertedAt(), updated.getUpdatedAt());
+        // 发布聚合根事件（LeadConvertedEvent → Analytics 归因）
+        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        // 审计：状态转移
         leadAuditMapper.insert(newAuditLog(siteId, leadId, actorId, "STATUS_TRANSIT",
-                toJson(Map.of("from", from.name().toLowerCase(), "to", to.name().toLowerCase()))));
-        return toResponse(lead);
+                toJson(Map.of("from", fromStatus, "to", updated.getStatus()))));
+        return toResponse(updated);
     }
 
     /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。

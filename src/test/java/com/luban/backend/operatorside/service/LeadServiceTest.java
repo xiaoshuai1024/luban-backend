@@ -1,10 +1,8 @@
 package com.luban.backend.operatorside.service;
 import com.luban.backend.operatorside.service.LeadService;
 import com.luban.backend.shared.crypto.LeadCryptoService;
-import com.luban.backend.shared.support.LeadNotifyService;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
-import com.luban.backend.shared.domain.LeadStatusMachine;
 
 import com.luban.backend.shared.dto.LeadSubmitRequest;
 import com.luban.backend.shared.dto.LeadSubmitResult;
@@ -50,8 +48,8 @@ class LeadServiceTest {
     @Mock private LeadAuditLogMapper leadAuditMapper;
     @Mock private UserSiteMapper userSiteMapper;
     @Mock private AntiSpamService antiSpamService;
-    @Mock private LeadNotifyService notifyService;
     @Mock private QuotaService quotaService;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     private LeadService service;
 
@@ -79,8 +77,8 @@ class LeadServiceTest {
         TenantGuardService tenantGuard = new TenantGuardService(userSiteMapper);
         service = new LeadService(formMapper, leadMapper, siteMapper, leadAuditMapper, tenantGuard,
                 new DedupService(), antiSpamService,
-                new LeadCryptoService(""), new LeadStatusMachine(), notifyService,
-                quotaService, userSiteMapper);
+                new LeadCryptoService(""), quotaService,
+                userSiteMapper, eventPublisher);
         // v02 QuotaService：mock findOwnerUserId 返回 null（跳过配额计数，兼容历史测试）
         org.mockito.Mockito.lenient().when(userSiteMapper.findOwnerUserId(anyString())).thenReturn(null);
     }
