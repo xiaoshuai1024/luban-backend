@@ -80,4 +80,6 @@ class RepositoryIsolationTest {
                             + "例外：SiteMapper（SITE_NOT_FOUND 种子校验）/ PlanMapper（只读种子）"
                             + "——详见 plan §3.4 读模型/种子数据白名单。"
                             + "当前未改造 Service 的领域 Mapper 依赖由 freeze 兜底，T5-T15 改造后递减");
+    // allowStoreUpdate 已在 archunit.properties 全局开启（freeze.store.default.allowStoreUpdate=true），
+    // DDD 改造期间违规集合递减时 store 自动更新。
 }

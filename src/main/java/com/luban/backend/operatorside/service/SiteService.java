@@ -11,7 +11,7 @@ import com.luban.backend.shared.mapper.DatasourceMapper;
 import com.luban.backend.shared.mapper.FormMapper;
 import com.luban.backend.shared.mapper.LeadMapper;
 import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -31,9 +31,9 @@ import java.util.stream.Collectors;
 @Service
 public class SiteService {
 
-    private final SiteMapper siteMapper;
+    private final SiteRepository siteRepository;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
-    // V2 级联删除：删除站点前需先清理子表（FK RESTRICT）
+    // V2 级联删除：删除站点前需先清理子表（FK RESTRICT）——子表属其它聚合，保留在 Service
     private final PageMapper pageMapper;
     private final FormMapper formMapper;
     private final LeadMapper leadMapper;
@@ -44,11 +44,11 @@ public class SiteService {
     private final CampaignMapper campaignMapper;
     private final ApplicationEventPublisher eventPublisher;
 
-    public SiteService(SiteMapper siteMapper, PageMapper pageMapper, FormMapper formMapper,
+    public SiteService(SiteRepository siteRepository, PageMapper pageMapper, FormMapper formMapper,
                        LeadMapper leadMapper, DatasourceMapper datasourceMapper, CollectionMapper collectionMapper,
                        ChannelMapper channelMapper, CampaignMapper campaignMapper,
                        ApplicationEventPublisher eventPublisher) {
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
         this.pageMapper = pageMapper;
         this.formMapper = formMapper;
         this.leadMapper = leadMapper;
@@ -60,24 +60,23 @@ public class SiteService {
     }
 
     public List<SiteResponse> list() {
-        return siteMapper.list().stream().map(SiteResponse::fromEntity).collect(Collectors.toList());
+        return siteRepository.list().stream().map(SiteResponse::fromEntity).collect(Collectors.toList());
     }
 
     public SiteResponse get(String id) {
-        Site s = siteMapper.getById(id);
-        if (s == null) throw BusinessException.siteNotFound();
-        return SiteResponse.fromEntity(s);
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
+        return SiteResponse.fromEntity(agg.toSite());
     }
 
     public SiteResponse create(String name, String slug, String baseUrl, String status) {
-        // 聚合根工厂默认 status=active（status 参数兼容旧接口，仅 active 有效）
         SiteAggregate agg = SiteAggregate.newSite(
                 UUID.randomUUID().toString(), name, slug, baseUrl != null ? baseUrl : "");
         if (status != null && !status.isBlank()) {
             agg.toSite().setStatus(status);
         }
         try {
-            siteMapper.insert(agg.toSite());
+            siteRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
@@ -89,17 +88,15 @@ public class SiteService {
 
     public SiteResponse update(String id, String name, String slug, String baseUrl, String status,
                                com.fasterxml.jackson.databind.JsonNode seo, com.fasterxml.jackson.databind.JsonNode analytics) {
-        Site site = siteMapper.getById(id);
-        if (site == null) throw BusinessException.siteNotFound();
-        SiteAggregate agg = SiteAggregate.reconstitute(site);
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
         agg.toSite().setSlug(slug);
         agg.toSite().setStatus(status);
         if (seo != null) agg.toSite().setSeoJson(jsonToString(seo));
         if (analytics != null) agg.toSite().setAnalyticsJson(jsonToString(analytics));
         agg.update(name, baseUrl != null ? baseUrl : "", null);
         try {
-            int n = siteMapper.update(agg.toSite());
-            if (n == 0) throw BusinessException.siteNotFound();
+            siteRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
@@ -141,10 +138,9 @@ public class SiteService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void delete(String id) {
-        Site site = siteMapper.getById(id);
-        if (site == null) throw BusinessException.siteNotFound();
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
         // 聚合根发 SiteDeletedEvent（供 Analytics/Campaign 等清理关联数据）
-        SiteAggregate agg = SiteAggregate.reconstitute(site);
         agg.delete();
         // 7 表级联删除（按 FK 顺序，事务边界由 @Transactional 保证）
         leadMapper.deleteBySiteId(id);
@@ -154,8 +150,7 @@ public class SiteService {
         channelMapper.deleteBySiteId(id);   // channels 先删（FK 引用 campaigns）
         campaignMapper.deleteBySiteId(id);  // campaigns 后删
         pageMapper.deleteBySiteId(id);      // pages 删后 page_versions 经 FK CASCADE 自动清
-        int n = siteMapper.deleteById(id);
-        if (n == 0) throw BusinessException.siteNotFound();
+        siteRepository.deleteById(id);
         // 事务提交后发布事件（AFTER_COMMIT 由 @TransactionalEventListener 消费）
         agg.pullEvents().forEach(eventPublisher::publishEvent);
     }
