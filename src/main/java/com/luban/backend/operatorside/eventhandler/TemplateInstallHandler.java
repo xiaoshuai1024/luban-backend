@@ -63,6 +63,7 @@ public class TemplateInstallHandler {
             TemplateInstallation inst = new TemplateInstallation();
             inst.setId(UUID.randomUUID().toString());
             inst.setTemplateId(event.templateId());
+            inst.setVersion(event.version());   // G1+ 修复：从 event 取 version（BUG-H：DDD 重构遗漏）
             inst.setSiteId(event.siteId());
             inst.setPageId(pageId);
             inst.setInstallerId(UserContext.getUserId());

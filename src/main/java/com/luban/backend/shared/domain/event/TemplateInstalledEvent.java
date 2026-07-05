@@ -18,6 +18,7 @@ import java.time.Instant;
  * @param siteId     目标站点 id
  * @param pageName   新页面名称
  * @param path       目标路径
+ * @param version    安装的模板版本号（写 template_installations 审计表必需）
  * @param schemaJson PageSchema JSON 字符串（模板版本快照）
  * @param occurredAt 发生时间
  */
@@ -26,6 +27,7 @@ public record TemplateInstalledEvent(
         String siteId,
         String pageName,
         String path,
+        int version,
         String schemaJson,
         Instant occurredAt
 ) implements DomainEvent {

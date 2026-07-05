@@ -151,7 +151,7 @@ public final class TemplateAggregate {
             throw BusinessException.templateNotPublished();
         }
         events.add(new TemplateInstalledEvent(
-                root.getId(), siteId, pageName, resolvedPath, schemaJson, Instant.now()));
+                root.getId(), siteId, pageName, resolvedPath, version, schemaJson, Instant.now()));
         return this;
     }
 

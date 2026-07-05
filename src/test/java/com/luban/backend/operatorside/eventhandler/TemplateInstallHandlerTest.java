@@ -43,8 +43,9 @@ class TemplateInstallHandlerTest {
         ObjectMapper om = new ObjectMapper();
         JsonNode schema = om.readTree("{\"components\":[]}");
         // G1 修复：事件携带 String schemaJson（领域纯 POJO，不携带 Jackson JsonNode）
+        // G1+ 修复：事件携带 version（BUG-H：原版漏 version，handler 写 audit 表 NULL → 整事务回滚）
         TemplateInstalledEvent event = new TemplateInstalledEvent(
-                "tmpl-1", "site-1", "落地页A", "/landing-a", schema.toString(), Instant.now());
+                "tmpl-1", "site-1", "落地页A", "/landing-a", 3, schema.toString(), Instant.now());
 
         handler.on(event);
 
@@ -64,13 +65,14 @@ class TemplateInstallHandlerTest {
         TemplateInstallation inst = instCaptor.getValue();
         assertThat(inst.getTemplateId()).isEqualTo("tmpl-1");
         assertThat(inst.getSiteId()).isEqualTo("site-1");
+        assertThat(inst.getVersion()).isEqualTo(3);   // BUG-H 回归断言：version 必须从 event 透传到 audit
         assertThat(inst.getPageId()).isEqualTo(saved.toPage().getId());
     }
 
     @Test
     void defaultsSchemaToEmptyObjectJsonWhenNull() {
         TemplateInstalledEvent event = new TemplateInstalledEvent(
-                "tmpl-1", "site-1", "空模板", "/x", null, Instant.now());
+                "tmpl-1", "site-1", "空模板", "/x", 1, null, Instant.now());
 
         handler.on(event);
 
