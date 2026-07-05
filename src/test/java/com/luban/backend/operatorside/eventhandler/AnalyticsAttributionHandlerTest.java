@@ -37,9 +37,10 @@ class AnalyticsAttributionHandlerTest {
 
     @Test
     void emitsLeadConvertedAnalyticsEvent() {
-        Instant convertedAt = Instant.now();
+        Instant convertedAt = Instant.parse("2026-07-05T12:34:56.000Z");
+        Instant occurredAt = Instant.parse("2026-07-05T12:34:56.500Z");
         LeadConvertedEvent event = new LeadConvertedEvent(
-                "lead-1", "site-1", convertedAt, Instant.now());
+                "lead-1", "site-1", convertedAt, occurredAt);
 
         handler.on(event);
 
@@ -52,6 +53,10 @@ class AnalyticsAttributionHandlerTest {
         assertThat(captor.getValue()).hasSize(1);
         AnalyticsEventInput emitted = captor.getValue().get(0);
         assertThat(emitted.eventType()).isEqualTo("lead_converted");
-        assertThat(emitted.clientTs()).isNotNull().isPositive();
+        // G1+ 加固：精确锁 clientTs == convertedAt（BUG-H 同款反模式：原版只断言 notNull，
+        // 若有人误改回 Instant.now()，测试照绿 → convertedAt 透传链失效但无人察觉）
+        assertThat(emitted.clientTs()).isEqualTo(convertedAt.toEpochMilli());
+        // payload 应携带 leadId 用于后续归因查询（payload 是 JSON 字符串）
+        assertThat(emitted.payload()).isNotNull().contains("\"leadId\":\"lead-1\"");
     }
 }
