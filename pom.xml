@@ -193,9 +193,10 @@
                                 <exclude>com/luban/backend/**/controller/**</exclude>
                                 <exclude>com/luban/backend/**/operatorside/repository/*</exclude>
                                 <exclude>com/luban/backend/**/domain/event/*</exclude>
-                                <!-- CampaignAggregate 内部 ChannelType 枚举无逻辑（0% 合理）；聚合根本体已被 CampaignAggregateTest 覆盖，不豁免 -->
-                                <exclude>com/luban/backend/shared/domain/CampaignAggregate$ChannelType*</exclude>
-                                <exclude>com/luban/backend/shared/domain/CampaignAggregate.*ChannelType*</exclude>
+                                <!-- ChannelType 常量类无逻辑（0% 合理）；阶段 2 从 CampaignAggregate 迁入 ChannelDomain。
+                                     ChannelDomain 本体已被 ChannelServiceTest 覆盖，不豁免。 -->
+                                <exclude>com/luban/backend/shared/domain/ChannelDomain$ChannelType*</exclude>
+                                <exclude>com/luban/backend/shared/domain/ChannelDomain.*ChannelType*</exclude>
                             </excludes>
                             <rules>
                                 <rule>

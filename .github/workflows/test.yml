@@ -13,7 +13,8 @@ jobs:
   test:
     name: Verify (mvn verify + ArchUnit + JaCoCo)
     runs-on: ubuntu-latest
-    # 使用内置 H2 + test profile，无需外部 MySQL/Redis
+    # H2（test profile）+ 无外部 MySQL/Redis。
+    # LeadServiceIntegrationTest @Disabled（需 Testcontainers MySQL + Redis，CI 不满足）。
     services: {}
     steps:
       - uses: actions/checkout@v4
