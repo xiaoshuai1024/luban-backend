@@ -3,7 +3,7 @@ import com.luban.backend.shared.crypto.LeadCryptoService;
 
 import com.luban.backend.shared.dto.AnalyticsEventInput;
 import com.luban.backend.shared.port.AnalyticsIngestPort;import com.luban.backend.shared.entity.AnalyticsEvent;
-import com.luban.backend.shared.mapper.AnalyticsEventMapper;
+import com.luban.backend.shared.repository.AnalyticsEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,11 +24,11 @@ public class AnalyticsEventService implements AnalyticsIngestPort {
     private static final Logger log = LoggerFactory.getLogger(AnalyticsEventService.class);
     private static final int MAX_BATCH = 50;
 
-    private final AnalyticsEventMapper eventMapper;
+    private final AnalyticsEventRepository eventRepository;
     private final LeadCryptoService cryptoService;
 
-    public AnalyticsEventService(AnalyticsEventMapper eventMapper, LeadCryptoService cryptoService) {
-        this.eventMapper = eventMapper;
+    public AnalyticsEventService(AnalyticsEventRepository eventRepository, LeadCryptoService cryptoService) {
+        this.eventRepository = eventRepository;
         this.cryptoService = cryptoService;
     }
 
@@ -62,7 +62,7 @@ public class AnalyticsEventService implements AnalyticsIngestPort {
                 event.setClientTs(input.clientTs() != null ? Instant.ofEpochMilli(input.clientTs()) : null);
                 event.setServerTs(now);
                 event.setSourceIpHashed(ipHashed);
-                eventMapper.insert(event);
+                eventRepository.insert(event);
                 count++;
             } catch (Exception e) {
                 log.warn("analytics event insert failed siteId={}: {}", siteId, e.getMessage());

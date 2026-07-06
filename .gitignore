@@ -12,3 +12,5 @@
 *.iml
 .env
 .env.local
+*.html
+jacoco*

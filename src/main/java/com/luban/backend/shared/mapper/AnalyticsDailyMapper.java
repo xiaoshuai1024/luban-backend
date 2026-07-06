@@ -29,4 +29,12 @@ public interface AnalyticsDailyMapper {
     List<AnalyticsDaily> listBySiteAndDateRange(@Param("siteId") String siteId,
                                                  @Param("from") LocalDate from,
                                                  @Param("to") LocalDate to);
+
+    /**
+     * G1 修复 N3：按 variant 聚合 views/conversions（替代 AbService 5 年窗口 + 内存 stream 过滤的 O(n) 扫描）。
+     * 直接 SUM 到 DB，O(1) 网络往返。
+     */
+    @Select("SELECT COALESCE(SUM(views), 0), COALESCE(SUM(conversions), 0) FROM analytics_daily " +
+            "WHERE site_id = #{siteId} AND variant_id = #{variantId}")
+    long[] aggregateByVariant(@Param("siteId") String siteId, @Param("variantId") String variantId);
 }

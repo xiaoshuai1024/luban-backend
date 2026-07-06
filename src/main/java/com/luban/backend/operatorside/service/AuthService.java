@@ -4,23 +4,23 @@ import com.luban.backend.shared.dto.LoginResponse;
 import com.luban.backend.shared.dto.UserResponse;
 import com.luban.backend.shared.entity.User;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.UserMapper;
+import com.luban.backend.shared.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AuthService {
 
-    private final UserMapper userMapper;
+    private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public AuthService(UserMapper userMapper, PasswordEncoder passwordEncoder) {
-        this.userMapper = userMapper;
+    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
     public LoginResponse login(String username, String password) {
-        User u = userMapper.findByUsername(username);
+        User u = userRepository.findEntityByUsername(username);
         if (u == null) {
             throw BusinessException.invalidCredentials();
         }
@@ -37,7 +37,7 @@ public class AuthService {
      * Current user for /auth/me (by userId from UserContext). Returns full user from DB.
      */
     public UserResponse me(String userId) {
-        User u = userMapper.getById(userId);
+        User u = userRepository.findEntityById(userId);
         if (u == null) {
             throw BusinessException.userNotFound();
         }

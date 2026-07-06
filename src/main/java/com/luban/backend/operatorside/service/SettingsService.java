@@ -1,8 +1,7 @@
 package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.entity.SystemSettingsRow;
-import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SystemSettingsMapper;
+import com.luban.backend.shared.repository.SystemSettingsRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -10,6 +9,7 @@ import java.time.Instant;
 
 /**
  * System settings with Redis cache at key settings:global (aligned with Go).
+ * DB 访问经 {@link SystemSettingsRepository}，不直连 SystemSettingsMapper。
  */
 @Service
 public class SettingsService {
@@ -17,11 +17,11 @@ public class SettingsService {
     private static final String CACHE_KEY = "settings:global";
     private static final String DEFAULT_JSON = "{}";
 
-    private final SystemSettingsMapper settingsMapper;
+    private final SystemSettingsRepository settingsRepository;
     private final StringRedisTemplate redisTemplate;
 
-    public SettingsService(SystemSettingsMapper settingsMapper, StringRedisTemplate redisTemplate) {
-        this.settingsMapper = settingsMapper;
+    public SettingsService(SystemSettingsRepository settingsRepository, StringRedisTemplate redisTemplate) {
+        this.settingsRepository = settingsRepository;
         this.redisTemplate = redisTemplate;
     }
 
@@ -30,7 +30,7 @@ public class SettingsService {
             String cached = redisTemplate.opsForValue().get(CACHE_KEY);
             if (cached != null) return cached;
         }
-        SystemSettingsRow row = settingsMapper.get();
+        SystemSettingsRow row = settingsRepository.find().orElse(null);
         if (row == null) return DEFAULT_JSON;
         String data = row.getDataJson() != null ? row.getDataJson() : DEFAULT_JSON;
         redisTemplate.opsForValue().set(CACHE_KEY, data);
@@ -40,17 +40,17 @@ public class SettingsService {
     public String update(String dataJson) {
         if (dataJson == null) dataJson = DEFAULT_JSON;
         Instant now = Instant.now();
-        SystemSettingsRow row = settingsMapper.get();
+        SystemSettingsRow row = settingsRepository.find().orElse(null);
         if (row == null) {
             row = new SystemSettingsRow();
             row.setId(1);
             row.setDataJson(dataJson);
             row.setUpdatedAt(now);
-            settingsMapper.insert(row);
+            settingsRepository.insert(row);
         } else {
             row.setDataJson(dataJson);
             row.setUpdatedAt(now);
-            settingsMapper.update(row);
+            settingsRepository.update(row);
         }
         redisTemplate.opsForValue().set(CACHE_KEY, dataJson);
         return dataJson;

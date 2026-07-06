@@ -1,11 +1,10 @@
 package com.luban.backend.operatorside.service;
 
-import com.luban.backend.shared.entity.Subscription;
-import com.luban.backend.shared.entity.TrialRecord;
-import com.luban.backend.shared.mapper.SubscriptionMapper;
-import com.luban.backend.shared.mapper.TrialRecordMapper;
+import com.luban.backend.shared.domain.SubscriptionAggregate;
+import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,42 +12,43 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * 试用降级服务（v02 billing 域，T-be-5）。
+ * 试用降级应用服务（backend-ddd-refactor plan v2 T14，v02 billing 域）。
  *
- * 扫描到期试用（ends_at <= now 且 converted_to IS NULL），
- * 将 Subscription 从 trialing 降为 active(free)（数据保留，仅降配额）。
+ * <p>扫描到期试用（ends_at <= now 且 converted_to IS NULL），
+ * 经 {@link SubscriptionAggregate#expireTrial()} 完成降级（trialing→active(free)）。
  *
- * 被 TrialScheduler（@Scheduled）定时调用；也可手动触发。
+ * <p>被 TrialScheduler（@Scheduled）定时调用；也可手动触发。
+ * 降级逻辑（状态机 + 字段清理 + 事件）在聚合根，本服务仅编排：扫描→加载→降级→保存→发布事件。
+ * 持久化经 {@link SubscriptionRepository}（不直接依赖领域 Mapper）。
  */
 @Service
 public class TrialService {
 
     private static final Logger log = LoggerFactory.getLogger(TrialService.class);
-    private static final String FREE_PLAN = "free";
 
-    private final TrialRecordMapper trialRecordMapper;
-    private final SubscriptionMapper subscriptionMapper;
+    private final SubscriptionRepository subscriptionRepository;
+    private final DomainEventPublisher eventPublisher;
 
-    public TrialService(TrialRecordMapper trialRecordMapper, SubscriptionMapper subscriptionMapper) {
-        this.trialRecordMapper = trialRecordMapper;
-        this.subscriptionMapper = subscriptionMapper;
+    public TrialService(SubscriptionRepository subscriptionRepository,
+                        DomainEventPublisher eventPublisher) {
+        this.subscriptionRepository = subscriptionRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
-     * 处理所有到期试用：逐条降级。
+     * 处理所有到期试用：逐个降级。
      * @return 降级的用户数
      */
     @Transactional(rollbackFor = Exception.class)
     public int expireTrials() {
         Instant now = Instant.now();
-        List<TrialRecord> expired = trialRecordMapper.listExpiredUnconverted(now);
+        var expired = subscriptionRepository.listExpiredUnconvertedTrials(now);
         int count = 0;
-        for (TrialRecord trial : expired) {
+        for (var trial : expired) {
             try {
-                downgrade(trial, now);
+                downgrade(trial.getUserId());
                 count++;
             } catch (Exception e) {
-                // 单条失败不阻断整体（已 @Transactional 会回滚单条；此处 try-catch 保护并发场景）
                 log.error("试用降级失败 userId={}: {}", trial.getUserId(), e.getMessage());
             }
         }
@@ -58,18 +58,19 @@ public class TrialService {
         return count;
     }
 
-    /** 单个用户降级：Subscription plan→free, status→active；TrialRecord 标记 converted_to。 */
-    private void downgrade(TrialRecord trial, Instant now) {
-        Subscription sub = subscriptionMapper.getByUserId(trial.getUserId());
-        if (sub == null) {
-            // 无订阅记录（异常情况），仅标记试用记录避免重复扫描
-            trialRecordMapper.markConverted(trial.getUserId(), FREE_PLAN);
+    /** 单个用户降级：经聚合根 expireTrial（状态机 + 字段 + 事件）。 */
+    private void downgrade(String userId) {
+        SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
+        if (agg == null) {
+            // 数据不一致：trial 已过期但无订阅聚合记录（历史脏数据/外部写入）。
+            // 补偿性修复：经 Repository 兜底标记 trial_converted，并 WARN 记录便于排查。
+            // 不绕过聚合根创建新订阅——那需要用户主动 subscribe，不能由定时任务代发。
+            log.warn("Trial downgrade: 订阅聚合缺失，补偿标记 trial_converted userId={}", userId);
+            subscriptionRepository.markTrialConverted(userId, "free");
             return;
         }
-        sub.setPlanCode(FREE_PLAN);
-        sub.setStatus("active");
-        sub.setTrialEndsAt(now);
-        subscriptionMapper.update(sub);
-        trialRecordMapper.markConverted(trial.getUserId(), FREE_PLAN);
+        agg.expireTrial();
+        subscriptionRepository.save(agg);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 }

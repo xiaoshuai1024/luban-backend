@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.dto.CollectionItemResponse;
 import com.luban.backend.shared.dto.PageResponse;
-import com.luban.backend.shared.entity.Site;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.dto.SiteConfigDto;
 import com.luban.backend.shared.port.PublicCollectionPort;
+import com.luban.backend.shared.port.SiteConfigReadPort;
 import com.luban.backend.publicside.service.PublicPageService;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +15,7 @@ import java.util.Map;
 
 /**
  * 公开接口：供对外站点（如 luban-website）按站点 slug + 路径获取已发布页面，无需鉴权。
+ * 站点配置经 {@link SiteConfigReadPort}（依赖倒置），不直连 SiteMapper/Site entity。
  */
 @RestController
 @RequestMapping("/public")
@@ -22,13 +23,14 @@ public class PublicController {
 
     private final PublicPageService publicPageService;
     private final PublicCollectionPort collectionService;
-    private final SiteMapper siteMapper;
+    private final SiteConfigReadPort siteConfigReadPort;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PublicController(PublicPageService publicPageService, PublicCollectionPort collectionService, SiteMapper siteMapper) {
+    public PublicController(PublicPageService publicPageService, PublicCollectionPort collectionService,
+                            SiteConfigReadPort siteConfigReadPort) {
         this.publicPageService = publicPageService;
         this.collectionService = collectionService;
-        this.siteMapper = siteMapper;
+        this.siteConfigReadPort = siteConfigReadPort;
     }
 
     /**
@@ -47,20 +49,22 @@ public class PublicController {
      */
     @GetMapping("/sites/{slug}/config")
     public Map<String, Object> getSiteConfig(@PathVariable String slug) {
-        Site site = siteMapper.getBySlug(slug);
-        if (site == null) {
-            return Map.of("analytics", Map.of());
-        }
+        return siteConfigReadPort.findBySlug(slug)
+                .map(this::buildConfigResponse)
+                .orElseGet(() -> Map.of("analytics", Map.of()));
+    }
+
+    private Map<String, Object> buildConfigResponse(SiteConfigDto site) {
         JsonNode analytics = null;
-        if (site.getAnalyticsJson() != null && !site.getAnalyticsJson().isEmpty()) {
+        if (site.analyticsJson() != null && !site.analyticsJson().isEmpty()) {
             try {
-                analytics = objectMapper.readTree(site.getAnalyticsJson());
+                analytics = objectMapper.readTree(site.analyticsJson());
             } catch (Exception ignored) {
             }
         }
         return Map.of(
-            "name", site.getName() != null ? site.getName() : "",
-            "baseUrl", site.getBaseUrl() != null ? site.getBaseUrl() : "",
+            "name", site.name() != null ? site.name() : "",
+            "baseUrl", site.baseUrl() != null ? site.baseUrl() : "",
             "analytics", analytics != null ? analytics : objectMapper.createObjectNode()
         );
     }

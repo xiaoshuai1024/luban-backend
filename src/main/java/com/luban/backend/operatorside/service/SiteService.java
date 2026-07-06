@@ -1,118 +1,89 @@
 package com.luban.backend.operatorside.service;
 
+import com.luban.backend.operatorside.repository.SiteCascadeDeleter;
+import com.luban.backend.shared.domain.SiteAggregate;
 import com.luban.backend.shared.dto.SiteResponse;
-import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.CollectionMapper;
-import com.luban.backend.shared.mapper.DatasourceMapper;
-import com.luban.backend.shared.mapper.FormMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
-import com.luban.backend.shared.mapper.ChannelMapper;
-import com.luban.backend.shared.mapper.CampaignMapper;
+import com.luban.backend.shared.repository.SiteRepository;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * 站点应用服务（backend-ddd-refactor plan v2 T5）。
+ *
+ * <p>用例编排：加载聚合根 → 调聚合根方法 → 保存 → 发布事件。零 Mapper 依赖——
+ * 7 表级联删除由 {@link SiteCascadeDeleter}（持久化协作者）执行，保持 Service 薄。
+ */
 @Service
 public class SiteService {
 
-    private final SiteMapper siteMapper;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
-    // V2 级联删除：删除站点前需先清理子表（FK RESTRICT）
-    private final PageMapper pageMapper;
-    private final FormMapper formMapper;
-    private final LeadMapper leadMapper;
-    private final DatasourceMapper datasourceMapper;
-    private final CollectionMapper collectionMapper;
-    // app-deeplink-backend-arch T8：短链子表也需级联清理
-    private final ChannelMapper channelMapper;
-    private final CampaignMapper campaignMapper;
+    private final SiteRepository siteRepository;
+    private final SiteCascadeDeleter cascadeDeleter;
+    
+    private final DomainEventPublisher eventPublisher;
 
-    public SiteService(SiteMapper siteMapper, PageMapper pageMapper, FormMapper formMapper,
-                       LeadMapper leadMapper, DatasourceMapper datasourceMapper, CollectionMapper collectionMapper,
-                       ChannelMapper channelMapper, CampaignMapper campaignMapper) {
-        this.siteMapper = siteMapper;
-        this.pageMapper = pageMapper;
-        this.formMapper = formMapper;
-        this.leadMapper = leadMapper;
-        this.datasourceMapper = datasourceMapper;
-        this.collectionMapper = collectionMapper;
-        this.channelMapper = channelMapper;
-        this.campaignMapper = campaignMapper;
+    public SiteService(SiteRepository siteRepository, SiteCascadeDeleter cascadeDeleter,
+                       DomainEventPublisher eventPublisher) {
+        this.siteRepository = siteRepository;
+        this.cascadeDeleter = cascadeDeleter;
+        this.eventPublisher = eventPublisher;
     }
 
     public List<SiteResponse> list() {
-        return siteMapper.list().stream().map(SiteResponse::fromEntity).collect(Collectors.toList());
+        return siteRepository.list().stream().map(SiteResponse::fromEntity).collect(Collectors.toList());
     }
 
     public SiteResponse get(String id) {
-        Site s = siteMapper.getById(id);
-        if (s == null) throw BusinessException.siteNotFound();
-        return SiteResponse.fromEntity(s);
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
+        return SiteResponse.fromEntity(agg.toSite());
     }
 
     public SiteResponse create(String name, String slug, String baseUrl, String status) {
-        if (status == null || status.isBlank()) status = "active";
-        Site site = new Site();
-        site.setId(UUID.randomUUID().toString());
-        site.setName(name);
-        site.setSlug(slug);
-        site.setBaseUrl(baseUrl != null ? baseUrl : "");
-        site.setStatus(status);
-        Instant now = Instant.now();
-        site.setCreatedAt(now);
-        site.setUpdatedAt(now);
+        SiteAggregate agg = SiteAggregate.newSite(
+                UUID.randomUUID().toString(), name, slug, baseUrl != null ? baseUrl : "");
+        if (status != null && !status.isBlank()) {
+            agg.toSite().setStatus(status);
+        }
         try {
-            siteMapper.insert(site);
+            siteRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
             }
             throw e;
         }
-        return SiteResponse.fromEntity(site);
+        return SiteResponse.fromEntity(agg.toSite());
     }
 
     public SiteResponse update(String id, String name, String slug, String baseUrl, String status,
                                com.fasterxml.jackson.databind.JsonNode seo, com.fasterxml.jackson.databind.JsonNode analytics) {
-        Site site = siteMapper.getById(id);
-        if (site == null) throw BusinessException.siteNotFound();
-        site.setName(name);
-        site.setSlug(slug);
-        site.setBaseUrl(baseUrl != null ? baseUrl : "");
-        site.setStatus(status);
-        // V2-T2/V2-T10：seo/analytics 为 null 不覆盖（保留旧值）；非 null 才写
-        if (seo != null) site.setSeoJson(jsonToString(seo));
-        if (analytics != null) site.setAnalyticsJson(jsonToString(analytics));
-        site.setUpdatedAt(Instant.now());
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
+        agg.toSite().setSlug(slug);
+        agg.toSite().setStatus(status);
+        if (seo != null) agg.toSite().setSeoJson(com.luban.backend.shared.util.JsonUtil.toString(seo));
+        if (analytics != null) agg.toSite().setAnalyticsJson(com.luban.backend.shared.util.JsonUtil.toString(analytics));
+        agg.update(name, baseUrl != null ? baseUrl : "", null);
         try {
-            int n = siteMapper.update(site);
-            if (n == 0) throw BusinessException.siteNotFound();
+            siteRepository.save(agg);
         } catch (DataIntegrityViolationException e) {
             if (isUniqueViolation(e)) {
                 throw BusinessException.slugConflict();
             }
             throw e;
         }
-        return SiteResponse.fromEntity(site);
+        return SiteResponse.fromEntity(agg.toSite());
     }
 
     /** V2-T10: JsonNode → 字符串；null 返回 null（保留旧值语义） */
-    private String jsonToString(com.fasterxml.jackson.databind.JsonNode node) {
-        if (node == null) return null;
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    
 
     /**
      * Detect a UNIQUE-constraint violation across DB drivers:
@@ -128,23 +99,21 @@ public class SiteService {
     }
 
     /**
-     * V2 级联删除：先清理所有子表（leads/forms/datasources/collections/pages/channels/campaigns），
-     * 再删 site。pages 删除后 page_versions 由 FK CASCADE 自动清。
-     * 解决删除站点时 FK RESTRICT 报 500 的问题。
-     * Wave 2 致命修复：加 @Transactional 防止中途失败留孤儿数据。
-     * app-deeplink-backend-arch T8：扩展级联含 channels/campaigns（短链子表）。
+     * V2 级联删除：先由 {@link SiteCascadeDeleter} 清理所有子表（leads/forms/datasources/
+     * collections/channels/campaigns/pages），再删 site。pages 删除后 page_versions 由 FK CASCADE 自动清。
+     * 事务边界由 {@code @Transactional} 保证；AFTER_COMMIT 发布 {@code SiteDeletedEvent}。
+     * app-deeplink-backend-arch T8：级联含 channels/campaigns（短链子表）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void delete(String id) {
-        if (siteMapper.getById(id) == null) throw BusinessException.siteNotFound();
-        leadMapper.deleteBySiteId(id);
-        formMapper.deleteBySiteId(id);
-        datasourceMapper.deleteBySiteId(id);
-        collectionMapper.deleteBySiteId(id);
-        channelMapper.deleteBySiteId(id);   // T8: channels 先删（FK 引用 campaigns）
-        campaignMapper.deleteBySiteId(id);  // T8: campaigns 后删
-        pageMapper.deleteBySiteId(id);
-        int n = siteMapper.deleteById(id);
-        if (n == 0) throw BusinessException.siteNotFound();
+        SiteAggregate agg = siteRepository.findById(id)
+                .orElseThrow(BusinessException::siteNotFound);
+        // 聚合根发 SiteDeletedEvent（供 Analytics/Campaign 等清理关联数据）
+        agg.delete();
+        // 7 表级联删除（FK 顺序由协作者封装，事务边界由本方法 @Transactional 保证）
+        cascadeDeleter.deleteChildren(id);
+        siteRepository.deleteById(id);
+        // 事务提交后发布事件（AFTER_COMMIT 由 @TransactionalEventListener 消费）
+        eventPublisher.publishAll(agg.pullEvents());
     }
 }

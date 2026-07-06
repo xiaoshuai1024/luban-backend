@@ -1,24 +1,28 @@
 package com.luban.backend.operatorside.service;
+import com.luban.backend.shared.util.JsonUtil;
 import com.luban.backend.shared.crypto.LeadCryptoService;
-import com.luban.backend.shared.support.LeadNotifyService;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
-import com.luban.backend.shared.domain.LeadStatusMachine;
+import com.luban.backend.shared.domain.LeadAggregate;
+import com.luban.backend.shared.domain.event.LeadSubmittedEvent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.dto.LeadResponse;
 import com.luban.backend.shared.dto.LeadSubmitRequest;
 import com.luban.backend.shared.dto.LeadSubmitResult;
 import com.luban.backend.shared.port.LeadSubmissionPort;
+import com.luban.backend.shared.port.SiteMembershipPort;
 import com.luban.backend.shared.entity.Form;
 import com.luban.backend.shared.entity.Lead;
 import com.luban.backend.shared.entity.LeadAuditLog;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.FormMapper;
-import com.luban.backend.shared.mapper.LeadAuditLogMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
-import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.repository.FormRepository;
+import com.luban.backend.shared.repository.LeadAuditLogRepository;
+import com.luban.backend.shared.repository.LeadRepository;
+import com.luban.backend.shared.repository.SiteRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,49 +33,52 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Lead 线索领域服务：留资提交编排（防刷→去重→加密→入库→通知）+ 线索中心读写 + 导出。
- * 编排逻辑通过 mock mapper/service 单测覆盖；DB 真实交互由集成测试覆盖。
+ * Lead 线索领域服务（backend-ddd-refactor plan v2 T7）。
+ *
+ * <p>留资提交编排（防刷→去重→加密→入库→通知事件）+ 线索中心读写 + 导出。
+ * 状态机/转换副作用下沉到 {@link LeadAggregate}（合并自删除的 LeadStatusMachine）。
+ * afterCommit 通知改为发布 {@link LeadSubmittedEvent}（LeadNotifyHandler AFTER_COMMIT 消费），
+ * 替代旧 TransactionSynchronizationManager 手动注册（更优雅、可测试、解耦）。
  */
 @Service
 public class LeadService implements LeadSubmissionPort {
+
+    private static final Logger log = LoggerFactory.getLogger(LeadService.class);
 
     /** P0 防刷默认值（P1 从 form.antiSpamJson 解析）。 */
     static final int DEFAULT_RATE_MAX = 5;
     static final int DEFAULT_RATE_WINDOW_SEC = 60;
     private static final List<String> DEFAULT_DEDUP_KEYS = List.of("phone");
 
-    private final FormMapper formMapper;
-    private final LeadMapper leadMapper;
-    private final SiteMapper siteMapper;
-    private final LeadAuditLogMapper leadAuditMapper;
+    private final FormRepository formRepository;
+    private final LeadRepository leadRepository;
+    private final SiteRepository siteRepository;
+    private final LeadAuditLogRepository leadAuditRepository;
     private final TenantGuardService tenantGuard;
     private final DedupService dedupService;
     private final AntiSpamService antiSpamService;
     private final LeadCryptoService cryptoService;
-    private final LeadStatusMachine statusMachine;
-    private final LeadNotifyService notifyService;
     private final QuotaService quotaService;
-    private final UserSiteMapper userSiteMapper;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final SiteMembershipPort siteMembership;
+    private final DomainEventPublisher eventPublisher;
 
-    public LeadService(FormMapper formMapper, LeadMapper leadMapper, SiteMapper siteMapper,
-                       LeadAuditLogMapper leadAuditMapper, TenantGuardService tenantGuard,
+
+    public LeadService(FormRepository formRepository, LeadRepository leadRepository, SiteRepository siteRepository,
+                       LeadAuditLogRepository leadAuditRepository, TenantGuardService tenantGuard,
                        DedupService dedupService, AntiSpamService antiSpamService,
-                       LeadCryptoService cryptoService, LeadStatusMachine statusMachine,
-                       LeadNotifyService notifyService, QuotaService quotaService,
-                       UserSiteMapper userSiteMapper) {
-        this.formMapper = formMapper;
-        this.leadMapper = leadMapper;
-        this.siteMapper = siteMapper;
-        this.leadAuditMapper = leadAuditMapper;
+                       LeadCryptoService cryptoService, QuotaService quotaService,
+                       SiteMembershipPort siteMembership, DomainEventPublisher eventPublisher) {
+        this.formRepository = formRepository;
+        this.leadRepository = leadRepository;
+        this.siteRepository = siteRepository;
+        this.leadAuditRepository = leadAuditRepository;
         this.tenantGuard = tenantGuard;
         this.dedupService = dedupService;
         this.antiSpamService = antiSpamService;
         this.cryptoService = cryptoService;
-        this.statusMachine = statusMachine;
-        this.notifyService = notifyService;
         this.quotaService = quotaService;
-        this.userSiteMapper = userSiteMapper;
+        this.siteMembership = siteMembership;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -83,11 +90,13 @@ public class LeadService implements LeadSubmissionPort {
      */
     @Transactional(rollbackFor = Exception.class)
     public LeadSubmitResult submit(LeadSubmitRequest req) {
-        Form form = formMapper.getById(req.formId());
+        Form form = formRepository.findFormById(req.formId());
         if (form == null) {
+            log.warn("留资提交拒绝：表单不存在 formId={}", req.formId());
             throw BusinessException.formNotFound();
         }
         if (!"active".equals(form.getStatus())) {
+            log.warn("留资提交拒绝：表单未启用 formId={} status={}", req.formId(), form.getStatus());
             throw BusinessException.leadDisabled();
         }
 
@@ -95,22 +104,25 @@ public class LeadService implements LeadSubmissionPort {
         boolean captchaRequired = parseCaptchaRequired(form);
         if (captchaRequired) {
             if (!antiSpamService.verifyCaptcha(req.captchaToken())) {
+                log.warn("留资提交拒绝：验证码错误 formId={} ip={}", req.formId(), req.ip());
                 throw BusinessException.captchaInvalid();
             }
         }
 
         // 1. 防刷（IP + form 维度）
         if (antiSpamService.isRateLimited(req.ip(), req.formId(), DEFAULT_RATE_MAX, DEFAULT_RATE_WINDOW_SEC)) {
+            log.warn("留资提交拒绝：触发防刷限流 formId={} ip={}", req.formId(), req.ip());
             throw BusinessException.leadSpamBlocked();
         }
 
         // 2. 去重
         List<String> dedupKeys = parseDedupKeys(form);
         String hash = dedupService.computeHash(req.formId(), req.contact(), dedupKeys);
-        int exists = leadMapper.countByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+        int exists = leadRepository.countByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
         DedupService.Policy policy = parsePolicy(form);
         DedupService.Decision decision = dedupService.decide(exists > 0, policy);
         if (decision == DedupService.Decision.REJECT) {
+            log.warn("留资提交拒绝：命中去重 REJECT 策略 formId={} hash={}", req.formId(), hash);
             throw BusinessException.leadDuplicate();
         }
 
@@ -118,53 +130,53 @@ public class LeadService implements LeadSubmissionPort {
         boolean dedupHit = exists > 0;
         if (dedupHit) {
             if (policy == DedupService.Policy.OVERWRITE) {
-                leadMapper.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+                leadRepository.deleteByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
             } else if (policy == DedupService.Policy.MERGE) {
-                Lead existing = leadMapper.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
+                Lead existing = leadRepository.getByFormHashInWindow(req.formId(), hash, form.getDedupWindow());
                 if (existing != null) {
                     Map<String, String> mergedContact = new LinkedHashMap<>(decryptContact(existing));
                     mergedContact.putAll(req.contact());
                     String mergedUtm = mergeUtm(existing.getUtmJson(), req.utm());
-                    leadMapper.updateContact(existing.getId(), existing.getSiteId(),
+                    leadRepository.updateContact(existing.getId(), existing.getSiteId(),
                             cryptoService.encrypt(toJson(mergedContact)), mergedUtm, Instant.now());
-                    // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚）
-                    registerAfterCommitNotify(existing.getId(), form);
+                    // 通知：发布 LeadSubmittedEvent（LeadNotifyHandler AFTER_COMMIT 消费，替代旧 afterCommit 钩子）
+                    publishLeadSubmitted(existing.getId(), form);
                     return new LeadSubmitResult(existing.getId(), existing.getStatus(), true);
                 }
             }
         }
 
-        // 3. 加密 contact + 构建 lead
+        // 3. 加密 contact + 经聚合根工厂构建 lead（统一入口，禁止 Service 直接 new Lead()）
         String encryptedContact = cryptoService.encrypt(toJson(req.contact()));
-        Lead lead = new Lead();
-        lead.setId(UUID.randomUUID().toString());
-        lead.setSiteId(form.getSiteId());
-        lead.setFormId(form.getId());
-        lead.setPageId(req.pageId() != null ? req.pageId() : form.getPageId());
-        lead.setContactJson(encryptedContact);
-        lead.setUtmJson(toJson(req.utm()));
-        lead.setStatus(decision == DedupService.Decision.MARK_DUPLICATE
-                ? LeadStatusMachine.Status.INVALID.name().toLowerCase()
-                : LeadStatusMachine.Status.NEW.name().toLowerCase());
-        lead.setDedupHash(hash);
-        lead.setSourceIp(req.ip());
-        lead.setVisitorId(req.visitorId());
-        Instant now = Instant.now();
-        lead.setCreatedAt(now);
-        lead.setUpdatedAt(now);
+        LeadAggregate.Status initialStatus = decision == DedupService.Decision.MARK_DUPLICATE
+                ? LeadAggregate.Status.INVALID
+                : LeadAggregate.Status.NEW;
+        LeadAggregate aggregate = LeadAggregate.newLead(
+                UUID.randomUUID().toString(),
+                form.getSiteId(),
+                form.getId(),
+                req.pageId() != null ? req.pageId() : form.getPageId(),
+                encryptedContact,
+                toJson(req.utm()),
+                hash,
+                req.ip(),
+                req.visitorId(),
+                initialStatus);
+        Lead lead = aggregate.toLead();
         try {
-            leadMapper.insert(lead);
+            // 经聚合根 → Repository.save（save 内部调 insert）
+            leadRepository.save(aggregate);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // OVERWRITE 并发竞争：降级为重复标记
-            lead.setStatus(LeadStatusMachine.Status.INVALID.name().toLowerCase());
+            lead.setStatus(LeadAggregate.Status.INVALID.name().toLowerCase());
         }
 
-        // 注册 afterCommit 通知（事务提交后才发通知，失败不回滚 lead）
-        registerAfterCommitNotify(lead.getId(), form);
+        // 通知：发布 LeadSubmittedEvent（LeadNotifyHandler AFTER_COMMIT 消费，替代旧 afterCommit 钩子）
+        publishLeadSubmitted(lead.getId(), form);
 
         // v02 T-be-4：留资用量计数（站点 owner 配额）。超限由 QuotaService 抛 429。
         // 注意：在 insert 之后调用，超限会回滚整个事务（@Transactional）。
-        String ownerUserId = userSiteMapper.findOwnerUserId(form.getSiteId());
+        String ownerUserId = siteMembership.findOwnerUserId(form.getSiteId()).orElse(null);
         if (ownerUserId != null) {
             quotaService.checkAndIncrement(ownerUserId, "leads");
         }
@@ -172,23 +184,14 @@ public class LeadService implements LeadSubmissionPort {
         return new LeadSubmitResult(lead.getId(), lead.getStatus(), dedupHit);
     }
 
-    /** 注册 afterCommit 回调：事务提交后发通知，失败不回滚 lead。 */
-    private void registerAfterCommitNotify(String leadId, Form form) {
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        try {
-                            Lead saved = leadMapper.getByIdAndSiteId(leadId, form.getSiteId());
-                            if (saved != null) notifyService.notifyNewLead(saved, form);
-                        } catch (Exception e) {
-                            // 通知失败不阻塞（lead 已提交）
-                        }
-                    }
-                }
-            );
-        }
+    /**
+     * 发布 LeadSubmittedEvent（事务提交后由 LeadNotifyHandler AFTER_COMMIT 消费）。
+     * 替代旧 TransactionSynchronizationManager.registerSynchronization afterCommit 手动注册
+     * ——更优雅、可测试、解耦（handler 已重载 lead+form 调 notifyService）。
+     */
+    private void publishLeadSubmitted(String leadId, Form form) {
+        eventPublisher.publish(new LeadSubmittedEvent(
+                leadId, form.getId(), form.getSiteId(), Instant.now()));
     }
 
     /** 合并 utm：旧值 + 新值（新值覆盖同名 key）。 */
@@ -197,7 +200,7 @@ public class LeadService implements LeadSubmissionPort {
         Map<String, String> merged = new LinkedHashMap<>();
         if (oldUtmJson != null && !oldUtmJson.isBlank()) {
             try {
-                merged.putAll(objectMapper.readValue(oldUtmJson, Map.class));
+                merged.putAll(JsonUtil.MAPPER.readValue(oldUtmJson, Map.class));
             } catch (Exception ignored) { }
         }
         if (newUtm != null) merged.putAll(newUtm);
@@ -213,8 +216,8 @@ public class LeadService implements LeadSubmissionPort {
             return listWithKeyword(siteId, status, formId, assigneeId, keyword.trim(), page, size);
         }
         int offset = Math.max(0, (page - 1) * size);
-        List<Lead> leads = leadMapper.listByQuery(siteId, status, formId, assigneeId, offset, size);
-        int total = leadMapper.countByQuery(siteId, status, formId, assigneeId);
+        List<Lead> leads = leadRepository.listByQuery(siteId, status, formId, assigneeId, offset, size);
+        int total = leadRepository.countByQuery(siteId, status, formId, assigneeId);
         List<LeadResponse> respList = leads.stream().map(this::toResponse).toList();
         return Map.of("list", respList, "total", total, "page", page, "pageSize", size);
     }
@@ -227,7 +230,7 @@ public class LeadService implements LeadSubmissionPort {
     private Map<String, Object> listWithKeyword(String siteId, String status, String formId, String assigneeId,
                                                 String keyword, int page, int size) {
         int scanLimit = 500; // 单次最多扫描 500 条，避免全表解密
-        List<Lead> all = leadMapper.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
+        List<Lead> all = leadRepository.listByQuery(siteId, status, formId, assigneeId, 0, scanLimit);
         boolean truncated = all.size() >= scanLimit;
         String kw = keyword.toLowerCase();
         List<LeadResponse> matched = all.stream()
@@ -261,7 +264,7 @@ public class LeadService implements LeadSubmissionPort {
         Lead lead = getOrThrow(siteId, leadId);
         Map<String, String> contact = decryptContact(lead);
         // 审计：记录谁在何时查看了哪条线索的联系方式
-        leadAuditMapper.insert(newAuditLog(siteId, leadId, actorId, "VIEW_CONTACT",
+        leadAuditRepository.insert(newAuditLog(siteId, leadId, actorId, "VIEW_CONTACT",
                 toJson(Map.of("formId", lead.getFormId() != null ? lead.getFormId() : ""))));
         return contact;
     }
@@ -269,20 +272,19 @@ public class LeadService implements LeadSubmissionPort {
     @Transactional(rollbackFor = Exception.class)
     public LeadResponse transitStatus(String siteId, String leadId, String toStatusRaw, String actorId) {
         Lead lead = getOrThrow(siteId, leadId);
-        LeadStatusMachine.Status from = statusMachine.parse(lead.getStatus());
-        LeadStatusMachine.Status to = statusMachine.parse(toStatusRaw);
-        statusMachine.ensureValid(from, to);
-        Instant now = Instant.now();
-        Instant convertedAt = to == LeadStatusMachine.Status.CONVERTED ? now : lead.getConvertedAt();
-        String assignee = (to == LeadStatusMachine.Status.ASSIGNED && actorId != null) ? actorId : lead.getAssigneeId();
-        leadMapper.updateStatus(leadId, siteId, to.name().toLowerCase(), assignee, convertedAt, now);
-        lead.setStatus(to.name().toLowerCase());
-        lead.setAssigneeId(assignee);
-        lead.setConvertedAt(convertedAt);
-        // 审计：状态转移（plan §3.1 审计口径）
-        leadAuditMapper.insert(newAuditLog(siteId, leadId, actorId, "STATUS_TRANSIT",
-                toJson(Map.of("from", from.name().toLowerCase(), "to", to.name().toLowerCase()))));
-        return toResponse(lead);
+        String fromStatus = lead.getStatus();
+        // 聚合根 transit：状态机校验 + 副作用（convertedAt/assigneeId）+ 事件（LeadConvertedEvent）
+        LeadAggregate agg = LeadAggregate.reconstitute(lead);
+        agg.transit(toStatusRaw, actorId);
+        Lead updated = agg.toLead();
+        leadRepository.updateStatus(leadId, siteId, updated.getStatus(), updated.getAssigneeId(),
+                updated.getConvertedAt(), updated.getUpdatedAt());
+        // 发布聚合根事件（LeadConvertedEvent → Analytics 归因）
+        eventPublisher.publishAll(agg.pullEvents());
+        // 审计：状态转移
+        leadAuditRepository.insert(newAuditLog(siteId, leadId, actorId, "STATUS_TRANSIT",
+                toJson(Map.of("from", fromStatus, "to", updated.getStatus()))));
+        return toResponse(updated);
     }
 
     /** 导出 CSV（contact 明文，权限由 BFF 保证；销售/运营跟进需明文）。
@@ -290,7 +292,7 @@ public class LeadService implements LeadSubmissionPort {
     public String exportCsv(String siteId, String status, String formId, String assigneeId, String actorId) {
         ensureSiteExists(siteId);
         // 审计：记录导出操作（含筛选条件）
-        leadAuditMapper.insert(newAuditLog(siteId, null, actorId, "EXPORT",
+        leadAuditRepository.insert(newAuditLog(siteId, null, actorId, "EXPORT",
                 toJson(Map.of("status", status == null ? "" : status,
                         "formId", formId == null ? "" : formId,
                         "assigneeId", assigneeId == null ? "" : assigneeId))));
@@ -299,9 +301,9 @@ public class LeadService implements LeadSubmissionPort {
                 || (formId != null && !formId.isBlank())
                 || (assigneeId != null && !assigneeId.isBlank());
         if (hasFilter) {
-            leads = leadMapper.listForExport(siteId, status, formId, assigneeId);
+            leads = leadRepository.listForExport(siteId, status, formId, assigneeId);
         } else {
-            leads = leadMapper.listAllForExport(siteId);
+            leads = leadRepository.listAllForExport(siteId);
         }
         StringBuilder sb = new StringBuilder();
         sb.append("phone,email,name,status,created_at\n");
@@ -317,14 +319,16 @@ public class LeadService implements LeadSubmissionPort {
     }
 
     private Lead getOrThrow(String siteId, String leadId) {
-        Lead lead = leadMapper.getByIdAndSiteId(leadId, siteId);
+        Lead lead = leadRepository.findById(leadId, siteId)
+                .map(LeadAggregate::toLead)
+                .orElse(null);
         if (lead == null) throw BusinessException.leadNotFound();
         return lead;
     }
 
     /** 校验 siteId 存在 + 当前用户有权访问（🟡 tenant authz）。 */
     private void ensureSiteExists(String siteId) {
-        if (siteId == null || siteId.isBlank() || siteMapper.getById(siteId) == null) {
+        if (siteId == null || siteId.isBlank() || !siteRepository.existsById(siteId)) {
             throw BusinessException.siteNotFound();
         }
         tenantGuard.ensureSiteAccess(siteId);
@@ -344,13 +348,13 @@ public class LeadService implements LeadSubmissionPort {
         Map<String, String> utm = null;
         if (lead.getUtmJson() != null && !lead.getUtmJson().isBlank()) {
             try {
-                utm = objectMapper.readValue(lead.getUtmJson(), Map.class);
+                utm = JsonUtil.MAPPER.readValue(lead.getUtmJson(), Map.class);
             } catch (Exception ignored) {
             }
         }
         String formName = null;
         if (lead.getFormId() != null) {
-            Form f = formMapper.getById(lead.getFormId());
+            Form f = formRepository.findFormById(lead.getFormId());
             if (f != null) formName = f.getName();
         }
         return new LeadResponse(lead.getId(), lead.getSiteId(), lead.getFormId(), lead.getPageId(),
@@ -363,7 +367,7 @@ public class LeadService implements LeadSubmissionPort {
         if (lead.getContactJson() == null || lead.getContactJson().isBlank()) return Map.of();
         try {
             String plain = cryptoService.decrypt(lead.getContactJson());
-            return objectMapper.readValue(plain, Map.class);
+            return JsonUtil.MAPPER.readValue(plain, Map.class);
         } catch (Exception e) {
             return Map.of();
         }
@@ -374,7 +378,7 @@ public class LeadService implements LeadSubmissionPort {
             return DEFAULT_DEDUP_KEYS;
         }
         try {
-            List<String> keys = objectMapper.readValue(form.getDedupKeysJson(), List.class);
+            List<String> keys = JsonUtil.MAPPER.readValue(form.getDedupKeysJson(), List.class);
             return keys.isEmpty() ? DEFAULT_DEDUP_KEYS : keys;
         } catch (Exception e) {
             return DEFAULT_DEDUP_KEYS;
@@ -397,7 +401,7 @@ public class LeadService implements LeadSubmissionPort {
     private boolean parseCaptchaRequired(Form form) {
         if (form.getAntiSpamJson() == null || form.getAntiSpamJson().isBlank()) return false;
         try {
-            Map<String, Object> cfg = objectMapper.readValue(form.getAntiSpamJson(), Map.class);
+            Map<String, Object> cfg = JsonUtil.MAPPER.readValue(form.getAntiSpamJson(), Map.class);
             Object v = cfg.get("captchaRequired");
             return Boolean.TRUE.equals(v);
         } catch (Exception e) {
@@ -421,7 +425,7 @@ public class LeadService implements LeadSubmissionPort {
     private String toJson(Object obj) {
         if (obj == null) return null;
         try {
-            return objectMapper.writeValueAsString(obj);
+            return JsonUtil.MAPPER.writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException("JSON 序列化失败", e);
         }

@@ -23,7 +23,7 @@ public class AuthFilter implements Filter {
 
     private static final String HEADER_USER_ID = "X-User-ID";
     private static final String HEADER_USER_ROLE = "X-User-Role";
-    private static final Set<String> NO_AUTH_PATHS = Set.of("/backend/ping", "/backend/auth/login");
+    private static final Set<String> NO_AUTH_PATHS = Set.of("/backend/ping", "/backend/healthz", "/backend/auth/login");
     private static final Pattern ADMIN_SITES = Pattern.compile("^/backend/sites(/[^/]+)?$"); // /backend/sites or /backend/sites/:id
     private static final Pattern ADMIN_USERS = Pattern.compile("^/backend/users(/.*)?$");
     private static final Pattern ADMIN_SETTINGS = Pattern.compile("^/backend/settings$");

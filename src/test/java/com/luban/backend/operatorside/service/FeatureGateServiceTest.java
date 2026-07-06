@@ -2,9 +2,14 @@ package com.luban.backend.operatorside.service;
 import com.luban.backend.operatorside.service.FeatureGateService;
 
 import com.luban.backend.shared.entity.FeatureGate;
-import com.luban.backend.shared.mapper.FeatureGateMapper;
-import com.luban.backend.shared.mapper.SubscriptionMapper;
-import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.entity.Plan;
+import com.luban.backend.shared.entity.Subscription;
+import com.luban.backend.shared.port.SiteMembershipPort;
+import com.luban.backend.shared.repository.FeatureGateRepository;
+import com.luban.backend.shared.repository.SubscriptionRepository;
+
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,29 +25,29 @@ import static org.mockito.Mockito.when;
 
 /**
  * FeatureGateService 单测（v01 T-be-7 + v02 T-be-3 plan 放行改造）。
- * v02 改造后构造器新增 UserSiteMapper/SubscriptionMapper/PlanService 依赖。
- * 测试在 findOwnerUserId 返回 null（历史站点无 owner）时验证向后兼容默认开启。
+ * v02 改造后构造器新增 SiteMembershipPort/SubscriptionRepository/PlanService 依赖。
+ * 测试在 findOwnerUserId 返回 empty（历史站点无 owner）时验证向后兼容默认开启。
  */
 @ExtendWith(MockitoExtension.class)
 class FeatureGateServiceTest {
 
-    @Mock private FeatureGateMapper featureGateMapper;
-    @Mock private UserSiteMapper userSiteMapper;
-    @Mock private SubscriptionMapper subscriptionMapper;
+    @Mock private FeatureGateRepository featureGateRepository;
+    @Mock private SiteMembershipPort siteMembership;
+    @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private PlanService planService;
 
     private FeatureGateService service;
 
     @BeforeEach
     void setup() {
-        service = new FeatureGateService(featureGateMapper, userSiteMapper, subscriptionMapper, planService);
+        service = new FeatureGateService(featureGateRepository, siteMembership, subscriptionRepository, planService);
         // 历史站点无 owner 记录 → 向后兼容默认开启（plan 判定被跳过）
-        lenient().when(userSiteMapper.findOwnerUserId(anyString())).thenReturn(null);
+        lenient().when(siteMembership.findOwnerUserId(anyString())).thenReturn(Optional.empty());
     }
 
     @Test
     void isEnabledDefaultsToTrueWhenNotConfigured() {
-        when(featureGateMapper.getBySiteAndKey("site-1", "lead_capture")).thenReturn(null);
+        when(featureGateRepository.findBySiteAndKey("site-1", "lead_capture")).thenReturn(Optional.empty());
         assertThat(service.isEnabled("site-1", "lead_capture")).isTrue();
     }
 
@@ -52,7 +57,7 @@ class FeatureGateServiceTest {
         gate.setSiteId("site-1");
         gate.setGateKey("realtime_collab");
         gate.setEnabled(false);
-        when(featureGateMapper.getBySiteAndKey("site-1", "realtime_collab")).thenReturn(gate);
+        when(featureGateRepository.findBySiteAndKey("site-1", "realtime_collab")).thenReturn(Optional.of(gate));
         assertThat(service.isEnabled("site-1", "realtime_collab")).isFalse();
     }
 
@@ -60,7 +65,7 @@ class FeatureGateServiceTest {
     void isEnabledReturnsTrueWhenExplicitlyEnabled() {
         FeatureGate gate = new FeatureGate();
         gate.setEnabled(true);
-        when(featureGateMapper.getBySiteAndKey("site-1", "poster_export")).thenReturn(gate);
+        when(featureGateRepository.findBySiteAndKey("site-1", "poster_export")).thenReturn(Optional.of(gate));
         assertThat(service.isEnabled("site-1", "poster_export")).isTrue();
     }
 
@@ -76,7 +81,7 @@ class FeatureGateServiceTest {
 
         assertThat(result).isFalse();
         ArgumentCaptor<FeatureGate> captor = ArgumentCaptor.forClass(FeatureGate.class);
-        verify(featureGateMapper).upsert(captor.capture());
+        verify(featureGateRepository).upsert(captor.capture());
         FeatureGate saved = captor.getValue();
         assertThat(saved.getSiteId()).isEqualTo("site-1");
         assertThat(saved.getGateKey()).isEqualTo("page_versioning");
@@ -89,5 +94,98 @@ class FeatureGateServiceTest {
         assertThat(FeatureGateService.KNOWN_KEYS).contains(
                 "lead_capture", "realtime_collab", "page_versioning", "poster_export",
                 "analytics", "ab_testing");
+    }
+
+    // ---------- v02 plan.gates 判定分支（owner 非 null 走通完整链路）----------
+
+    @Test
+    void isEnabled_returns_true_when_plan_gates_contains_key() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "analytics")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("growth");
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("growth");
+        plan.setGates("[\"analytics\",\"ab_testing\"]");
+        when(planService.getPlan("growth")).thenReturn(plan);
+        when(planService.parseGates("[\"analytics\",\"ab_testing\"]"))
+                .thenReturn(List.of("analytics", "ab_testing"));
+
+        assertThat(service.isEnabled("site-1", "analytics")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_false_when_plan_does_not_contain_v02_new_key() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "ab_testing")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("free");
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("free");
+        plan.setGates("[\"lead_capture\"]");
+        when(planService.getPlan("free")).thenReturn(plan);
+        when(planService.parseGates("[\"lead_capture\"]"))
+                .thenReturn(List.of("lead_capture"));
+
+        assertThat(service.isEnabled("site-1", "ab_testing")).isFalse();
+    }
+
+    @Test
+    void isEnabled_returns_true_for_v01_legacy_key_via_backward_compat() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "realtime_collab")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("free");
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(sub);
+        Plan plan = new Plan();
+        plan.setPlanCode("free");
+        plan.setGates("[\"lead_capture\"]");
+        when(planService.getPlan("free")).thenReturn(plan);
+        when(planService.parseGates("[\"lead_capture\"]"))
+                .thenReturn(List.of("lead_capture"));
+
+        assertThat(service.isEnabled("site-1", "realtime_collab")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_default_when_subscription_null() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "lead_capture")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(null);
+
+        assertThat(service.isEnabled("site-1", "lead_capture")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_default_when_plan_null_and_v01_key() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "lead_capture")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("ghost");
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(sub);
+        when(planService.getPlan("ghost")).thenReturn(null);
+        when(planService.parseGates(null)).thenReturn(java.util.Collections.emptyList());
+
+        assertThat(service.isEnabled("site-1", "lead_capture")).isTrue();
+    }
+
+    @Test
+    void isEnabled_returns_false_when_plan_null_and_v02_new_key() {
+        when(featureGateRepository.findBySiteAndKey("site-1", "analytics")).thenReturn(Optional.empty());
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
+        Subscription sub = new Subscription();
+        sub.setUserId("owner-1");
+        sub.setPlanCode("ghost");
+        when(subscriptionRepository.findEntityByUserId("owner-1")).thenReturn(sub);
+        when(planService.getPlan("ghost")).thenReturn(null);
+        when(planService.parseGates(null)).thenReturn(java.util.Collections.emptyList());
+
+        assertThat(service.isEnabled("site-1", "analytics")).isFalse();
     }
 }

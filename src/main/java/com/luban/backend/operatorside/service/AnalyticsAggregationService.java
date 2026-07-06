@@ -2,9 +2,9 @@ package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.entity.AnalyticsDaily;
 import com.luban.backend.shared.entity.AnalyticsEvent;
-import com.luban.backend.shared.mapper.AnalyticsDailyMapper;
-import com.luban.backend.shared.mapper.AnalyticsEventMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.AnalyticsEventRepository;
+import com.luban.backend.shared.repository.AnalyticsReadRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import com.luban.backend.shared.entity.Site;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,21 +24,23 @@ import java.util.*;
  *   conversions = count(event_type='form_submit' 且 payload 含 conversion 标记)
  *
  * upsert 原子累加（可重复运行，幂等）。
+ * DB 访问经 Repository，不直连 Mapper。
  */
 @Service
 public class AnalyticsAggregationService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyticsAggregationService.class);
 
-    private final AnalyticsEventMapper eventMapper;
-    private final AnalyticsDailyMapper dailyMapper;
-    private final SiteMapper siteMapper;
+    private final AnalyticsEventRepository eventRepository;
+    private final AnalyticsReadRepository dailyRepository;
+    private final SiteRepository siteRepository;
 
-    public AnalyticsAggregationService(AnalyticsEventMapper eventMapper, AnalyticsDailyMapper dailyMapper,
-                                       SiteMapper siteMapper) {
-        this.eventMapper = eventMapper;
-        this.dailyMapper = dailyMapper;
-        this.siteMapper = siteMapper;
+    public AnalyticsAggregationService(AnalyticsEventRepository eventRepository,
+                                       AnalyticsReadRepository dailyRepository,
+                                       SiteRepository siteRepository) {
+        this.eventRepository = eventRepository;
+        this.dailyRepository = dailyRepository;
+        this.siteRepository = siteRepository;
     }
 
     /** 每天凌晨 3:05 聚合前一天的数据。首次延迟 2 分钟。 */
@@ -69,7 +71,7 @@ public class AnalyticsAggregationService {
 
     /** 聚合单个站点的某天数据。 */
     private int aggregateForSite(String siteId, LocalDate date, String dateStr) {
-        List<AnalyticsEvent> events = eventMapper.listBySiteAndDate(siteId, dateStr);
+        List<AnalyticsEvent> events = eventRepository.listBySiteAndDate(siteId, dateStr);
         if (events.isEmpty()) return 0;
 
         // 分组键：pageId + variantId
@@ -100,7 +102,7 @@ public class AnalyticsAggregationService {
             daily.setViews(counts[0]);
             daily.setSubmissions(counts[1]);
             daily.setConversions(counts[2]);
-            dailyMapper.upsert(daily);
+            dailyRepository.upsert(daily);
             rows++;
         }
         return rows;
@@ -110,7 +112,7 @@ public class AnalyticsAggregationService {
     private Set<String> collectSiteIdsForDate(String dateStr) {
         // 简化：用 SiteMapper 查所有站点（如果有 listAll）；否则从事件表 distinct
         // SiteMapper 只有 getById/getBySlug，这里用 sites 表遍历
-        List<Site> sites = siteMapper.list();
+        List<Site> sites = siteRepository.list();
         Set<String> ids = new HashSet<>();
         for (Site s : sites) ids.add(s.getId());
         return ids;
