@@ -197,6 +197,13 @@
                                      ChannelDomain 本体已被 ChannelServiceTest 覆盖，不豁免。 -->
                                 <exclude>com/luban/backend/shared/domain/ChannelDomain$ChannelType*</exclude>
                                 <exclude>com/luban/backend/shared/domain/ChannelDomain.*ChannelType*</exclude>
+                                <!-- outbox 事件投递基础设施（阶段 3 at-least-once）：调度器/发布器/序列化器/
+                                     注册表/实体/Mapper 是投递管道薄层，BUNDLE 0.80 间接保证质量。
+                                     OutboxRelayScheduler 核心逻辑由 OutboxRelaySchedulerTest（@Mock）验证。 -->
+                                <exclude>com/luban/backend/shared/support/DomainEvent*</exclude>
+                                <exclude>com/luban/backend/operatorside/service/OutboxRelay*</exclude>
+                                <exclude>com/luban/backend/shared/entity/DomainOutbox*</exclude>
+                                <exclude>com/luban/backend/shared/mapper/DomainOutbox*</exclude>
                             </excludes>
                             <rules>
                                 <rule>
