@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -29,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * H2 in MySQL compatibility mode (Testcontainers MySQL unavailable in CI/dev — Docker daemon not running). 用 UUID 保证 site/page 唯一，避免 Redis/缓存干扰。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("test")
 @Transactional
 class PagePublishConsistencyIT {
 
