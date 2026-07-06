@@ -26,28 +26,12 @@ import java.util.List;
  *   <li>assertDeletable：有 channel 抛 CAMPAIGN_HAS_CHANNELS（跨聚合查询由 Service 传入 boolean）</li>
  * </ul>
  *
- * <p><b>保留为 static 的无状态工具</b>（合法领域工厂/纯函数，非反模式——反模式特指聚合根不变量写成
- * static 操作外部 entity，而非无状态纯函数）：
- * <ul>
- *   <li>{@link #CODE_PATTERN} / {@link ChannelType}：常量/枚举</li>
- *   <li>{@link #validateAndResolveCode}：channel 短码校验+生成（无状态，被独立 channel 也复用）</li>
- *   <li>{@link #newChannel}：channel 实体工厂；{@link #transitionChannel}：channel 状态机</li>
- * </ul>
- * 独立 channel（campaignId=null）的领域逻辑保留 static——channel 可作独立聚合根（plan 未要求
- * ChannelAggregate，此处不为它单独建聚合，避免 scope 膨胀）。
+ * <p><b>Channel 领域逻辑</b>（创建/状态机/短码生成/类型枚举）已全部迁移至 {@link ChannelDomain}——
+ * Channel 是 Campaign 的子聚合，其领域逻辑属 Channel 自身关注点，不应寄生在 Campaign 聚合根上（SRP）。
  */
 public final class CampaignAggregate {
 
-    /** Channel 类型枚举 */
-    public static final class ChannelType {
-        public static final String QRCODE = "qrcode";
-        public static final String H5 = "h5";
-        public static final String SOCIAL = "social";
-        public static final String AD = "ad";
-        public static final String MINIAPP = "miniapp";
-    }
-
-    // === 状态常量 ===
+    // === 状态常量（聚合根自身状态机用，无外部引用） ===
     public static final String STATUS_PLANNED = "planned";
     public static final String STATUS_ACTIVE = "active";
     public static final String STATUS_COMPLETED = "completed";
@@ -65,7 +49,7 @@ public final class CampaignAggregate {
     /** 工厂：创建新活动（初始 status=planned，时间窗校验）。 */
     public static CampaignAggregate newCampaign(String id, String siteId, String name,
                                                 Instant startAt, Instant endAt) {
-        validateCampaignCreate(name, startAt, endAt);
+        validateCreateParams(name, startAt, endAt);
         Instant now = Instant.now();
         Campaign c = new Campaign();
         c.setId(id);
@@ -142,12 +126,11 @@ public final class CampaignAggregate {
         return drained;
     }
 
-    // ===== 无状态静态工具（合法领域工厂/纯函数，非"静态类伪装聚合根"反模式） =====
-
     /**
-     * 校验 Campaign 创建参数。endAt &gt;= startAt（若都提供）。
+     * 校验 Campaign 创建参数（工厂内部不变量）。endAt &gt;= startAt（若都提供）。
+     * 私有——仅 {@link #newCampaign} 调用，无外部引用，不暴露为 public static。
      */
-    public static void validateCampaignCreate(String name, Instant startAt, Instant endAt) {
+    private static void validateCreateParams(String name, Instant startAt, Instant endAt) {
         if (name == null || name.isBlank()) {
             throw BusinessException.missingField("name");
         }
@@ -155,8 +138,4 @@ public final class CampaignAggregate {
             throw BusinessException.invalidTimeWindow();
         }
     }
-
-    // === Channel 领域逻辑已迁移至 {@link ChannelDomain}（G1 修复 Y5：
-    //     Channel 子聚合的创建/状态机/短码生成是 Channel 自身关注点，不应寄生在 CampaignAggregate。
-    //     validateAndResolveCode / transitionChannel / newChannel / generateBase62Code / CODE_PATTERN 见 ChannelDomain）===
 }

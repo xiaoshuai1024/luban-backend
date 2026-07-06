@@ -2,8 +2,8 @@ package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.entity.AnalyticsDaily;
 import com.luban.backend.shared.entity.Lead;
-import com.luban.backend.shared.mapper.AnalyticsDailyMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
+import com.luban.backend.shared.repository.AnalyticsReadRepository;
+import com.luban.backend.shared.repository.LeadRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,14 +27,14 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AnalyticsQueryServiceTest {
 
-    @Mock private AnalyticsDailyMapper dailyMapper;
-    @Mock private LeadMapper leadMapper;
+    @Mock private AnalyticsReadRepository dailyRepository;
+    @Mock private LeadRepository leadRepository;
 
     private AnalyticsQueryService service;
 
     @BeforeEach
     void setUp() {
-        service = new AnalyticsQueryService(dailyMapper, leadMapper);
+        service = new AnalyticsQueryService(dailyRepository, leadRepository);
     }
 
     private AnalyticsDaily daily(String pageId, long views, long conv, long submissions) {
@@ -48,11 +48,11 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getOverview_aggregates_views_conversions_leads() {
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any()))
                 .thenReturn(List.of(daily("p1", 100, 10, 5), daily("p2", 200, 20, 8)));
         Lead lead = new Lead();
         lead.setId("l-1");
-        when(leadMapper.listForExport("site-1", null, null, null)).thenReturn(List.of(lead));
+        when(leadRepository.listForExport("site-1", null, null, null)).thenReturn(List.of(lead));
 
         Map<String, Object> overview = service.getOverview("site-1", LocalDate.now(), LocalDate.now());
 
@@ -65,8 +65,8 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getOverview_zero_views_rate_is_zero() {
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of());
-        when(leadMapper.listForExport("site-1", null, null, null)).thenReturn(List.of());
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of());
+        when(leadRepository.listForExport("site-1", null, null, null)).thenReturn(List.of());
 
         Map<String, Object> overview = service.getOverview("site-1", LocalDate.now(), LocalDate.now());
 
@@ -76,7 +76,7 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getFunnel_filters_by_pageId() {
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any()))
                 .thenReturn(List.of(daily("p1", 100, 10, 5), daily("p2", 200, 20, 8)));
 
         Map<String, Object> funnel = service.getFunnel("site-1", LocalDate.now(), LocalDate.now(), "p1");
@@ -90,7 +90,7 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getFunnel_all_pages_when_pageId_null() {
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any()))
                 .thenReturn(List.of(daily("p1", 100, 10, 5), daily("p2", 200, 20, 8)));
 
         Map<String, Object> funnel = service.getFunnel("site-1", LocalDate.now(), LocalDate.now(), null);
@@ -111,7 +111,7 @@ class AnalyticsQueryServiceTest {
         Lead converted = new Lead();
         converted.setStatus("converted");
         converted.setUtmJson("{\"source\":\"wechat\",\"medium\":\"social\",\"campaign\":\"c1\"}");
-        when(leadMapper.listForExport("site-1", null, null, null))
+        when(leadRepository.listForExport("site-1", null, null, null))
                 .thenReturn(List.of(withUtm, direct, converted));
 
         Map<String, Object> result = service.getAttribution("site-1", LocalDate.now(), LocalDate.now());
@@ -125,7 +125,7 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getAttribution_empty_leads_returns_empty_rows() {
-        when(leadMapper.listForExport("site-1", null, null, null)).thenReturn(List.of());
+        when(leadRepository.listForExport("site-1", null, null, null)).thenReturn(List.of());
 
         Map<String, Object> result = service.getAttribution("site-1", LocalDate.now(), LocalDate.now());
 
@@ -142,7 +142,7 @@ class AnalyticsQueryServiceTest {
         d1.setDate(LocalDate.of(2026, 1, 1));
         AnalyticsDaily d2 = daily("p2", 200, 20, 8);
         d2.setDate(LocalDate.of(2026, 1, 2));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any()))
                 .thenReturn(List.of(d1, d2));
 
         Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
@@ -159,7 +159,7 @@ class AnalyticsQueryServiceTest {
     void getTrend_submissions_metric() {
         AnalyticsDaily d = daily("p1", 100, 10, 5);
         d.setDate(LocalDate.of(2026, 1, 1));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
 
         Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "submissions");
 
@@ -173,7 +173,7 @@ class AnalyticsQueryServiceTest {
     void getTrend_conversions_metric() {
         AnalyticsDaily d = daily("p1", 100, 10, 5);
         d.setDate(LocalDate.of(2026, 1, 1));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
 
         Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "conversions");
 
@@ -188,7 +188,7 @@ class AnalyticsQueryServiceTest {
         // metric=null 与未知值都走 default 分支（views）
         AnalyticsDaily d = daily("p1", 100, 10, 5);
         d.setDate(LocalDate.of(2026, 1, 1));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of(d));
 
         Map<String, Object> resultNull = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), null);
         Map<String, Object> resultUnknown = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "unknown");
@@ -203,7 +203,7 @@ class AnalyticsQueryServiceTest {
 
     @Test
     void getTrend_empty_data_returns_empty_points() {
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of());
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any())).thenReturn(List.of());
 
         Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
 
@@ -221,7 +221,7 @@ class AnalyticsQueryServiceTest {
         d2.setDate(LocalDate.of(2026, 1, 1));
         AnalyticsDaily d3 = daily("p3", 50, 2, 1);
         d3.setDate(LocalDate.of(2026, 1, 2));
-        when(dailyMapper.listBySiteAndDateRange(eq("site-1"), any(), any()))
+        when(dailyRepository.listBySiteAndDateRange(eq("site-1"), any(), any()))
                 .thenReturn(List.of(d1, d2, d3));
 
         Map<String, Object> result = service.getTrend("site-1", LocalDate.now(), LocalDate.now(), "views");
@@ -243,7 +243,7 @@ class AnalyticsQueryServiceTest {
         Lead valid = new Lead();
         valid.setStatus("converted");
         valid.setUtmJson("{\"source\":\"wechat\",\"medium\":\"social\",\"campaign\":\"c1\"}");
-        when(leadMapper.listForExport("site-1", null, null, null))
+        when(leadRepository.listForExport("site-1", null, null, null))
                 .thenReturn(List.of(badJson, valid));
 
         Map<String, Object> result = service.getAttribution("site-1", LocalDate.now(), LocalDate.now());

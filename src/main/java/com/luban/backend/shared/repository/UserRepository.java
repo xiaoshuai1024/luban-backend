@@ -28,6 +28,20 @@ public interface UserRepository {
     UserAggregate findByUsername(String username);
 
     /**
+     * 按 username 加载用户 entity（认证读模型）。
+     * 供 AuthService.login 使用——需读取 password/status 原始字段（聚合根不暴露）。
+     * 不存在返回 null。
+     */
+    User findEntityByUsername(String username);
+
+    /**
+     * 按 id 加载用户 entity（读模型）。
+     * 供 AuthService.me 使用——需原始字段构造 UserResponse。
+     * 不存在返回 null。
+     */
+    User findEntityById(String id);
+
+    /**
      * 保存聚合根（insert or update）。
      * 判定依据：createdAt 是否已存在（新建时工厂会设 createdAt）。
      */

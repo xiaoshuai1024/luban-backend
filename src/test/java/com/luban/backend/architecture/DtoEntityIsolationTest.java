@@ -44,8 +44,19 @@ class DtoEntityIsolationTest {
                     .orShould().beAnnotatedWith("com.baomidou.mybatisplus.annotation.TableId")
                     .because("DTO 是 API 契约对象，禁止耦合持久化框架注解");
 
-    // 注：controllers_should_not_reference_entities 已移除——远端 dev controller
-    // 内嵌 record DTO 引用 entity 是既定模式。保留 entity/mapper 间的隔离守护。
+    // 阶段 4c 恢复：controller 内嵌 record DTO 已上提至 shared/dto，
+    // publicside controller 的 Site entity 直连已改经 SiteConfigReadPort。规则硬执行。
+
+    /**
+     * Controller 禁止直接依赖 Entity 包（API 契约层不耦合持久化模型）。
+     * 阶段 5 DTO 上提后，所有 controller 经 DTO/Response 对象，不直引 entity。
+     */
+    @ArchTest
+    static final ArchRule controllers_should_not_reference_entities =
+            noClasses().that().resideInAPackage("..controller..")
+                    .should().dependOnClassesThat().resideInAPackage("..shared.entity..")
+                    .because("Controller 是 API 契约层，禁止直接依赖持久化 Entity；"
+                            + "经 DTO/Response 对象与 Service 交互（阶段 5 DTO 上提后无违规）");
 
     /**
      * Mapper 不得依赖 DTO 包（DTO 不应进入持久化层）。

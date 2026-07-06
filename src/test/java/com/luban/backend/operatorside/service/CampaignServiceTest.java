@@ -6,8 +6,8 @@ import com.luban.backend.shared.dto.CampaignSaveRequest;
 import com.luban.backend.shared.entity.Campaign;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.CampaignRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,19 +39,19 @@ import static org.mockito.Mockito.when;
 class CampaignServiceTest {
 
     @Mock private CampaignRepository campaignRepository;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
     @Mock private TenantGuardService tenantGuard;
-    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
+    @Mock private com.luban.backend.shared.support.DomainEventPublisher eventPublisher;
 
     private CampaignService service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignService(campaignRepository, siteMapper, tenantGuard, eventPublisher);
+        service = new CampaignService(campaignRepository, siteRepository, tenantGuard, eventPublisher);
     }
 
     private void stubSiteOk(String siteId) {
-        when(siteMapper.getById(siteId)).thenReturn(new Site());
+        when(siteRepository.existsById(siteId)).thenReturn(true);
         doNothing().when(tenantGuard).ensureSiteAccess(siteId);
     }
 
@@ -77,7 +77,7 @@ class CampaignServiceTest {
 
     @Test
     void list_site_not_found_throws() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("site-x"))
                 .isInstanceOf(BusinessException.class)

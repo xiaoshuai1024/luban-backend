@@ -32,6 +32,11 @@ public class PageRepositoryImpl implements PageRepository {
     }
 
     @Override
+    public Page findEntityByIdAndSiteId(String id, String siteId) {
+        return pageMapper.getByIdAndSiteId(id, siteId);
+    }
+
+    @Override
     public List<Page> listBySiteId(String siteId) {
         return pageMapper.listBySiteId(siteId);
     }
@@ -52,6 +57,11 @@ public class PageRepositoryImpl implements PageRepository {
     @Override
     public int deleteByIdAndSiteId(String id, String siteId) {
         return pageMapper.deleteByIdAndSiteId(id, siteId);
+    }
+
+    @Override
+    public void updateEntity(Page page) {
+        pageMapper.update(page);
     }
 
     @Override

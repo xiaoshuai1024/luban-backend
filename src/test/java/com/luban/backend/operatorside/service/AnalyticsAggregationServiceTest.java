@@ -3,9 +3,9 @@ package com.luban.backend.operatorside.service;
 import com.luban.backend.shared.entity.AnalyticsDaily;
 import com.luban.backend.shared.entity.AnalyticsEvent;
 import com.luban.backend.shared.entity.Site;
-import com.luban.backend.shared.mapper.AnalyticsDailyMapper;
-import com.luban.backend.shared.mapper.AnalyticsEventMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.AnalyticsReadRepository;
+import com.luban.backend.shared.repository.AnalyticsEventRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,15 +34,15 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AnalyticsAggregationServiceTest {
 
-    @Mock private AnalyticsEventMapper eventMapper;
-    @Mock private AnalyticsDailyMapper dailyMapper;
-    @Mock private SiteMapper siteMapper;
+    @Mock private AnalyticsEventRepository eventRepository;
+    @Mock private AnalyticsReadRepository dailyRepository;
+    @Mock private SiteRepository siteRepository;
 
     private AnalyticsAggregationService service;
 
     @BeforeEach
     void setUp() {
-        service = new AnalyticsAggregationService(eventMapper, dailyMapper, siteMapper);
+        service = new AnalyticsAggregationService(eventRepository, dailyRepository, siteRepository);
     }
 
     private Site site(String id) {
@@ -61,30 +61,30 @@ class AnalyticsAggregationServiceTest {
 
     @Test
     void aggregateDaily_noSites_returnsZeroWithoutUpsert() {
-        when(siteMapper.list()).thenReturn(List.of());
+        when(siteRepository.list()).thenReturn(List.of());
 
         int rows = service.aggregateDaily(LocalDate.of(2026, 7, 1));
 
         assertThat(rows).isZero();
-        verify(dailyMapper, never()).upsert(any());
+        verify(dailyRepository, never()).upsert(any());
     }
 
     @Test
     void aggregateDaily_siteWithNoEvents_returnsZero() {
-        when(siteMapper.list()).thenReturn(List.of(site("s-1")));
-        when(eventMapper.listBySiteAndDate("s-1", "2026-07-01")).thenReturn(List.of());
+        when(siteRepository.list()).thenReturn(List.of(site("s-1")));
+        when(eventRepository.listBySiteAndDate("s-1", "2026-07-01")).thenReturn(List.of());
 
         int rows = service.aggregateDaily(LocalDate.of(2026, 7, 1));
 
         assertThat(rows).isZero();
-        verify(dailyMapper, never()).upsert(any());
+        verify(dailyRepository, never()).upsert(any());
     }
 
     @Test
     void aggregateDaily_countsViewsAndSubmissionsGroupedByPageVariant() {
-        when(siteMapper.list()).thenReturn(List.of(site("s-1")));
+        when(siteRepository.list()).thenReturn(List.of(site("s-1")));
         // pageA: 2 views + 1 submit; pageB(variant v1): 1 view
-        when(eventMapper.listBySiteAndDate("s-1", "2026-07-01")).thenReturn(List.of(
+        when(eventRepository.listBySiteAndDate("s-1", "2026-07-01")).thenReturn(List.of(
                 event("page_view", "pageA", null),
                 event("page_view", "pageA", null),
                 event("form_submit", "pageA", null),
@@ -97,7 +97,7 @@ class AnalyticsAggregationServiceTest {
         assertThat(rows).isEqualTo(2);   // 2 个分组键（pageA|、pageB|v1）
 
         ArgumentCaptor<AnalyticsDaily> captor = ArgumentCaptor.forClass(AnalyticsDaily.class);
-        verify(dailyMapper, times(2)).upsert(captor.capture());
+        verify(dailyRepository, times(2)).upsert(captor.capture());
         // 找到 pageA 行：views=2, submissions=1, conversions=1
         AnalyticsDaily pageARow = captor.getAllValues().stream()
                 .filter(d -> "pageA".equals(d.getPageId())).findFirst().orElseThrow();
@@ -117,32 +117,32 @@ class AnalyticsAggregationServiceTest {
 
     @Test
     void aggregateDaily_multipleSites_aggregatesEachIndependently() {
-        when(siteMapper.list()).thenReturn(List.of(site("s-1"), site("s-2")));
-        when(eventMapper.listBySiteAndDate(eq("s-1"), eq("2026-07-01")))
+        when(siteRepository.list()).thenReturn(List.of(site("s-1"), site("s-2")));
+        when(eventRepository.listBySiteAndDate(eq("s-1"), eq("2026-07-01")))
                 .thenReturn(List.of(event("page_view", "p1", null)));
-        when(eventMapper.listBySiteAndDate(eq("s-2"), eq("2026-07-01")))
+        when(eventRepository.listBySiteAndDate(eq("s-2"), eq("2026-07-01")))
                 .thenReturn(List.of(event("form_submit", "p2", null)));
 
         int rows = service.aggregateDaily(LocalDate.of(2026, 7, 1));
 
         assertThat(rows).isEqualTo(2);   // 每站 1 行
         ArgumentCaptor<AnalyticsDaily> captor = ArgumentCaptor.forClass(AnalyticsDaily.class);
-        verify(dailyMapper, times(2)).upsert(captor.capture());
+        verify(dailyRepository, times(2)).upsert(captor.capture());
         assertThat(captor.getAllValues()).extracting(AnalyticsDaily::getSiteId)
                 .containsExactlyInAnyOrder("s-1", "s-2");
     }
 
     @Test
     void aggregateDaily_nullPageAndVariant_handledAsEmptyKey() {
-        when(siteMapper.list()).thenReturn(List.of(site("s-1")));
-        when(eventMapper.listBySiteAndDate("s-1", "2026-07-01"))
+        when(siteRepository.list()).thenReturn(List.of(site("s-1")));
+        when(eventRepository.listBySiteAndDate("s-1", "2026-07-01"))
                 .thenReturn(List.of(event("page_view", null, null)));
 
         int rows = service.aggregateDaily(LocalDate.of(2026, 7, 1));
 
         assertThat(rows).isEqualTo(1);
         ArgumentCaptor<AnalyticsDaily> captor = ArgumentCaptor.forClass(AnalyticsDaily.class);
-        verify(dailyMapper).upsert(captor.capture());
+        verify(dailyRepository).upsert(captor.capture());
         assertThat(captor.getValue().getPageId()).isNull();
         assertThat(captor.getValue().getVariantId()).isNull();
     }

@@ -7,8 +7,8 @@ import com.luban.backend.shared.dto.DatasourceTestResult;
 import com.luban.backend.shared.entity.Datasource;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.DatasourceRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,18 +34,18 @@ import static org.mockito.Mockito.when;
 class DatasourceServiceTest {
 
     @Mock private DatasourceRepository datasourceRepository;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
 
     private DatasourceService service;
 
     @BeforeEach
     void setUp() {
-        service = new DatasourceService(datasourceRepository, siteMapper);
+        service = new DatasourceService(datasourceRepository, siteRepository);
     }
 
     @Test
     void list_returns_datasources_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         Datasource ds = new Datasource();
         ds.setId("ds-1");
         ds.setSiteId("site-1");
@@ -61,7 +61,7 @@ class DatasourceServiceTest {
 
     @Test
     void list_throws_when_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("site-x"))
                 .isInstanceOf(BusinessException.class)
@@ -99,7 +99,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_inserts_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         DatasourceResponse resp = service.create("site-1", "新数据源", "api", null);
 
@@ -110,7 +110,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_throws_when_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.create("site-x", "n", "static", null))
                 .isInstanceOf(BusinessException.class)
@@ -120,7 +120,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_throws_when_type_invalid() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create("site-1", "n", "mongodb", null))
                 .isInstanceOf(BusinessException.class)
@@ -211,7 +211,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_throws_name_conflict_on_duplicate_violation() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         doThrow(new DataIntegrityViolationException("Duplicate entry 'n' for key 'uk_datasources_site_name'"))
                 .when(datasourceRepository).save(any());
 
@@ -222,7 +222,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_rethrows_non_duplicate_data_integrity_violation() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         doThrow(new DataIntegrityViolationException("Cannot delete or update a parent row: FK constraint fails"))
                 .when(datasourceRepository).save(any());
 
@@ -268,7 +268,7 @@ class DatasourceServiceTest {
 
     @Test
     void create_throws_invalid_argument_when_config_unserializable() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         // POJONode 包装不可序列化对象 → writeValueAsString 抛异常 → INVALID_ARGUMENT
         POJONode unserializable = new POJONode(new Object());
 

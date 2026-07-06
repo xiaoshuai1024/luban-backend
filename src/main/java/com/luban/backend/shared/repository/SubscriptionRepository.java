@@ -19,6 +19,13 @@ public interface SubscriptionRepository {
     /** 按 userId 加载聚合根（含 TrialRecord，若存在），不存在返回 null。 */
     SubscriptionAggregate findByUserId(String userId);
 
+    /**
+     * 按 userId 加载订阅 entity（读模型，不含 trial）。
+     * 供只需 planCode/status 等字段的查询方使用（如 FeatureGateService 放行判定），
+     * 避免为单一字段重建整个聚合根。不存在返回 null。
+     */
+    com.luban.backend.shared.entity.Subscription findEntityByUserId(String userId);
+
     /** 保存聚合根（insert or update Subscription，并处理 TrialRecord insert/markConverted）。 */
     void save(SubscriptionAggregate aggregate);
 

@@ -2,16 +2,16 @@ package com.luban.backend.operatorside.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.luban.backend.shared.domain.CampaignAggregate;
+import com.luban.backend.shared.domain.ChannelDomain;
 import com.luban.backend.shared.dto.ChannelResponse;
 import com.luban.backend.shared.dto.ChannelSaveRequest;
 import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.ChannelMapper;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.ChannelRepository;
+import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -34,9 +35,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ChannelServiceTest {
 
-    @Mock private ChannelMapper channelMapper;
-    @Mock private SiteMapper siteMapper;
-    @Mock private PageMapper pageMapper;
+    @Mock private ChannelRepository channelRepository;
+    @Mock private SiteRepository siteRepository;
+    @Mock private PageRepository pageRepository;
     @Mock private TenantGuardService tenantGuard;
 
     private ChannelService service;
@@ -44,11 +45,11 @@ class ChannelServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ChannelService(channelMapper, siteMapper, pageMapper, tenantGuard);
+        service = new ChannelService(channelRepository, siteRepository, pageRepository, tenantGuard);
     }
 
     private void stubSiteOk(String siteId) {
-        when(siteMapper.getById(siteId)).thenReturn(new Site());
+        when(siteRepository.existsById(siteId)).thenReturn(true);
         doNothing().when(tenantGuard).ensureSiteAccess(siteId);
     }
 
@@ -70,11 +71,11 @@ class ChannelServiceTest {
         ch.setId("ch-1");
         ch.setSiteId("site-1");
         ch.setCode("abc");
-        ch.setType(CampaignAggregate.ChannelType.H5);
+        ch.setType(ChannelDomain.ChannelType.H5);
         ch.setUtmTemplate("{\"utm_source\":\"wechat\"}");
         ch.setShortUrl("abc");
         ch.setStatus("active");
-        when(channelMapper.listBySiteId("site-1")).thenReturn(List.of(ch));
+        when(channelRepository.listBySiteId("site-1")).thenReturn(List.of(ch));
 
         List<ChannelResponse> out = service.list("site-1");
 
@@ -85,12 +86,12 @@ class ChannelServiceTest {
 
     @Test
     void list_throws_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("site-x"))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("SITE_NOT_FOUND");
-        verifyNoInteractions(channelMapper);
+        verifyNoInteractions(channelRepository);
     }
 
     @Test
@@ -102,7 +103,7 @@ class ChannelServiceTest {
         ch.setCode("abc");
         ch.setType("h5");
         ch.setStatus("active");
-        when(channelMapper.getByIdAndSiteId("ch-1", "site-1")).thenReturn(ch);
+        when(channelRepository.getByIdAndSiteId("ch-1", "site-1")).thenReturn(Optional.of(ch));
 
         ChannelResponse resp = service.get("site-1", "ch-1");
 
@@ -113,7 +114,7 @@ class ChannelServiceTest {
     @Test
     void get_throws_channel_not_found() {
         stubSiteOk("site-1");
-        when(channelMapper.getByIdAndSiteId("ch-x", "site-1")).thenReturn(null);
+        when(channelRepository.getByIdAndSiteId("ch-x", "site-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.get("site-1", "ch-x"))
                 .isInstanceOf(BusinessException.class)
@@ -123,9 +124,9 @@ class ChannelServiceTest {
     @Test
     void create_with_operator_code_inserts_and_returns() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         ChannelSaveRequest req = new ChannelSaveRequest(
-                "site-1", "mycode", "page-1", CampaignAggregate.ChannelType.QRCODE,
+                "site-1", "mycode", "page-1", ChannelDomain.ChannelType.QRCODE,
                 utmNode(), "camp-1", null);
 
         ChannelResponse resp = service.create(req);
@@ -133,63 +134,63 @@ class ChannelServiceTest {
         assertThat(resp.code()).isEqualTo("mycode");
         assertThat(resp.shortUrl()).isEqualTo("mycode");
         assertThat(resp.status()).isEqualTo("active");
-        verify(channelMapper).insert(any(Channel.class));
+        verify(channelRepository).insert(any(Channel.class));
     }
 
     @Test
     void create_with_generated_code_succeeds_first_try() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         ChannelSaveRequest req = new ChannelSaveRequest(
-                "site-1", null, "page-1", CampaignAggregate.ChannelType.H5, utmNode(), null, null);
+                "site-1", null, "page-1", ChannelDomain.ChannelType.H5, utmNode(), null, null);
 
         ChannelResponse resp = service.create(req);
 
         assertThat(resp.code()).hasSize(6);
         assertThat(resp.code()).matches("[a-zA-Z0-9]{6}");
         assertThat(resp.shortUrl()).isEqualTo(resp.code());
-        verify(channelMapper).insert(any(Channel.class));
+        verify(channelRepository).insert(any(Channel.class));
     }
 
     @Test
     void create_generated_code_retries_then_succeeds() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
-        // 前 2 次碰撞，第 3 次成功（when().thenThrow().thenReturn() 链）
-        when(channelMapper.insert(any(Channel.class)))
-                .thenThrow(new DataIntegrityViolationException("uk_site_code"))
-                .thenThrow(new DataIntegrityViolationException("uk_site_code"))
-                .thenReturn(1);
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        // 前 2 次碰撞，第 3 次成功（void 方法用 doThrow().doNothing() 链）
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uk_site_code"))
+                .doThrow(new DataIntegrityViolationException("uk_site_code"))
+                .doNothing()
+                .when(channelRepository).insert(any(Channel.class));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-1", "h5", utmNode(), null, null);
 
         ChannelResponse resp = service.create(req);
 
         assertThat(resp.code()).hasSize(6);
-        org.mockito.Mockito.verify(channelMapper, org.mockito.Mockito.times(3)).insert(any(Channel.class));
+        org.mockito.Mockito.verify(channelRepository, org.mockito.Mockito.times(3)).insert(any(Channel.class));
     }
 
     @Test
     void create_generated_code_retries_exhausted_throws_code_gen_failed() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uk_site_code"))
-                .when(channelMapper).insert(any(Channel.class));
+                .when(channelRepository).insert(any(Channel.class));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-1", "h5", utmNode(), null, null);
 
         assertThatThrownBy(() -> service.create(req))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("CODE_GEN_FAILED");
-        org.mockito.Mockito.verify(channelMapper, org.mockito.Mockito.times(3)).insert(any(Channel.class));
+        org.mockito.Mockito.verify(channelRepository, org.mockito.Mockito.times(3)).insert(any(Channel.class));
     }
 
     @Test
     void create_operator_code_duplicate_throws_channel_code_duplicate() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uk_site_code"))
-                .when(channelMapper).insert(any(Channel.class));
+                .when(channelRepository).insert(any(Channel.class));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", "mycode", "page-1", "h5", utmNode(), null, null);
 
@@ -201,27 +202,27 @@ class ChannelServiceTest {
     @Test
     void create_invalid_type_throws_invalid_argument() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-1", "unknown_type", utmNode(), null, null);
 
         assertThatThrownBy(() -> service.create(req))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("INVALID_ARGUMENT");
-        verify(channelMapper, never()).insert(any(Channel.class));
+        verify(channelRepository, never()).insert(any(Channel.class));
     }
 
     @Test
     void create_page_not_found_throws_page_not_found() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-x", "site-1")).thenReturn(null);
+        when(pageRepository.findEntityByIdAndSiteId("page-x", "site-1")).thenReturn(null);
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-x", "h5", utmNode(), null, null);
 
         assertThatThrownBy(() -> service.create(req))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("PAGE_NOT_FOUND");
-        verify(channelMapper, never()).insert(any(Channel.class));
+        verify(channelRepository, never()).insert(any(Channel.class));
     }
 
     @Test
@@ -230,7 +231,7 @@ class ChannelServiceTest {
         Page p = new Page();
         p.setId("page-1");
         p.setSiteId("site-OTHER");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(p);
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(p);
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-1", "h5", utmNode(), null, null);
 
@@ -242,7 +243,7 @@ class ChannelServiceTest {
     @Test
     void create_invalid_code_format_throws() {
         stubSiteOk("site-1");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(pageOf("site-1"));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", "bad code!", "page-1", "h5", utmNode(), null, null);
 
@@ -260,7 +261,7 @@ class ChannelServiceTest {
         existing.setType("h5");
         existing.setTargetPageId("page-1");
         existing.setStatus("active");
-        when(channelMapper.getByIdAndSiteId("ch-1", "site-1")).thenReturn(existing);
+        when(channelRepository.getByIdAndSiteId("ch-1", "site-1")).thenReturn(Optional.of(existing));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, null, "social", null, "camp-2", "inactive");
 
@@ -269,7 +270,7 @@ class ChannelServiceTest {
         assertThat(resp.type()).isEqualTo("social");
         assertThat(resp.status()).isEqualTo("inactive");
         assertThat(resp.campaignId()).isEqualTo("camp-2");
-        verify(channelMapper).update(any(Channel.class));
+        verify(channelRepository).update(any(Channel.class));
     }
 
     @Test
@@ -281,8 +282,8 @@ class ChannelServiceTest {
         existing.setTargetPageId("page-old");
         existing.setType("h5");
         existing.setStatus("active");
-        when(channelMapper.getByIdAndSiteId("ch-1", "site-1")).thenReturn(existing);
-        when(pageMapper.getByIdAndSiteId("page-new", "site-1")).thenReturn(pageOf("site-1"));
+        when(channelRepository.getByIdAndSiteId("ch-1", "site-1")).thenReturn(Optional.of(existing));
+        when(pageRepository.findEntityByIdAndSiteId("page-new", "site-1")).thenReturn(pageOf("site-1"));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, "page-new", null, null, null, null);
 
@@ -299,20 +300,20 @@ class ChannelServiceTest {
         existing.setSiteId("site-1");
         existing.setType("h5");
         existing.setStatus("active");
-        when(channelMapper.getByIdAndSiteId("ch-1", "site-1")).thenReturn(existing);
+        when(channelRepository.getByIdAndSiteId("ch-1", "site-1")).thenReturn(Optional.of(existing));
         ChannelSaveRequest req = new ChannelSaveRequest(
                 "site-1", null, null, "bogus", null, null, null);
 
         assertThatThrownBy(() -> service.update("site-1", "ch-1", req))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("INVALID_ARGUMENT");
-        verify(channelMapper, never()).update(any(Channel.class));
+        verify(channelRepository, never()).update(any(Channel.class));
     }
 
     @Test
     void update_channel_not_found_throws() {
         stubSiteOk("site-1");
-        when(channelMapper.getByIdAndSiteId("ch-x", "site-1")).thenReturn(null);
+        when(channelRepository.getByIdAndSiteId("ch-x", "site-1")).thenReturn(Optional.empty());
         ChannelSaveRequest req = new ChannelSaveRequest("site-1", null, null, "h5", null, null, null);
 
         assertThatThrownBy(() -> service.update("site-1", "ch-x", req))
@@ -326,21 +327,21 @@ class ChannelServiceTest {
         Channel existing = new Channel();
         existing.setId("ch-1");
         existing.setSiteId("site-1");
-        when(channelMapper.getByIdAndSiteId("ch-1", "site-1")).thenReturn(existing);
+        when(channelRepository.getByIdAndSiteId("ch-1", "site-1")).thenReturn(Optional.of(existing));
 
         service.delete("site-1", "ch-1");
 
-        verify(channelMapper).deleteByIdAndSiteId("ch-1", "site-1");
+        verify(channelRepository).deleteByIdAndSiteId("ch-1", "site-1");
     }
 
     @Test
     void delete_not_found_throws() {
         stubSiteOk("site-1");
-        when(channelMapper.getByIdAndSiteId("ch-x", "site-1")).thenReturn(null);
+        when(channelRepository.getByIdAndSiteId("ch-x", "site-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.delete("site-1", "ch-x"))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo("CHANNEL_NOT_FOUND");
-        verify(channelMapper, never()).deleteByIdAndSiteId(anyString(), anyString());
+        verify(channelRepository, never()).deleteByIdAndSiteId(anyString(), anyString());
     }
 }

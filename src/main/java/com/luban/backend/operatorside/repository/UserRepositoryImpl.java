@@ -41,6 +41,16 @@ public class UserRepositoryImpl implements UserRepository {
     }
 
     @Override
+    public User findEntityByUsername(String username) {
+        return userMapper.findByUsername(username);
+    }
+
+    @Override
+    public User findEntityById(String id) {
+        return userMapper.getById(id);
+    }
+
+    @Override
     @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(UserAggregate aggregate) {
         User entity = aggregate.toEntity();

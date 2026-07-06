@@ -11,7 +11,7 @@ import com.luban.backend.shared.entity.Template;
 import com.luban.backend.shared.entity.TemplateVersion;
 import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.repository.TemplateRepository;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,11 +34,11 @@ public class TemplateService {
 
     private final TemplateRepository templateRepository;
     private final ObjectMapper objectMapper;
-    private final ApplicationEventPublisher eventPublisher;
+    private final DomainEventPublisher eventPublisher;
 
     public TemplateService(TemplateRepository templateRepository,
                            ObjectMapper objectMapper,
-                           ApplicationEventPublisher eventPublisher) {
+                           DomainEventPublisher eventPublisher) {
         this.templateRepository = templateRepository;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
@@ -175,7 +175,7 @@ public class TemplateService {
         // 聚合根校验 + 发事件（跨聚合解耦）。schema toString 后传聚合根（领域事件纯 POJO，不携带 JsonNode）。
         agg.install(schemaNode.toString(), req.siteId(), t.getName(), path, v.getVersion());
         templateRepository.save(agg);   // 触发 updatedAt（即使无字段变更，保持原行为）
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
 
         return new InstallResult(path, v.getVersion());
     }

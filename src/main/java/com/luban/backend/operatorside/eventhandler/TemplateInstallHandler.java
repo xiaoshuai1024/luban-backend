@@ -9,6 +9,7 @@ import com.luban.backend.shared.mapper.TemplateInstallationMapper;
 import com.luban.backend.shared.repository.PageRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,9 @@ import java.util.UUID;
  * G1 修复 🟡-2：失败用 try/catch + ERROR 日志记录（templateId/siteId/path），不静默吞——
  * 安装主事务已成功，page 创建失败是可观测的副作用丢失，记录以便人工/对账补建。
  *
+ * <p><b>幂等（at-least-once 投递）</b>：outbox relay 可能重投。通过检查 (siteId, path) 是否
+ * 已有 page 判定——若已存在则跳过创建（DB 级幂等）。
+ *
  * <p>替代旧 TemplateService 直接调用 PageService.create 的跨聚合直接调用反模式。
  */
 @Component
@@ -47,7 +51,25 @@ public class TemplateInstallHandler {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(TemplateInstalledEvent event) {
+        installTemplate(event);
+    }
+
+    /** 补偿投递（outbox relay 重发，无事务上下文）。幂等：(siteId, path) 已存在则跳过。 */
+    @EventListener
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onRelay(TemplateInstalledEvent event) {
+        installTemplate(event);
+    }
+
+    private void installTemplate(TemplateInstalledEvent event) {
         try {
+            // 幂等：检查 (templateId, siteId) 是否已安装过——relay 重投时跳过重复创建
+            if (installationMapper.countByTemplateIdAndSiteId(event.templateId(), event.siteId()) > 0) {
+                log.debug("TemplateInstalledEvent 重复投递，跳过安装 templateId={}, siteId={}",
+                        event.templateId(), event.siteId());
+                return;
+            }
+
             String pageId = UUID.randomUUID().toString();
             String schemaJson = event.schemaJson();
             PageAggregate agg = PageAggregate.newPage(

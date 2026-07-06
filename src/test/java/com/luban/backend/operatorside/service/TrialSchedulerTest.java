@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 
 import java.util.List;
 
@@ -28,7 +28,7 @@ import static org.mockito.Mockito.when;
 class TrialSchedulerTest {
 
     @Mock private SubscriptionRepository subscriptionRepository;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private DomainEventPublisher eventPublisher;
 
     private TrialScheduler scheduler;
     private TrialService trialService;

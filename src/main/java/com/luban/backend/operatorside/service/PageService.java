@@ -9,8 +9,8 @@ import com.luban.backend.shared.domain.PageAggregate;
 import com.luban.backend.shared.dto.PageResponse;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -28,8 +28,8 @@ import java.util.stream.Collectors;
  * 经 {@link PageAggregate#publish} 统一入口 + {@link PublishedPageProjection}（事务内投影）保证。
  *
  * <p>v2 DDD 改造：{@code pageMapper} → {@link PageRepository}；{@code publishedPageMapper} →
- * {@link PublishedPageProjection}（投影协作者，事务内双写一致性，非 AFTER_COMMIT 事件）；保留
- * {@code siteMapper}（SITE_NOT_FOUND 种子校验，ArchUnit 白名单豁免）。零写侧 Mapper 依赖。
+ * {@link PublishedPageProjection}（投影协作者，事务内双写一致性，非 AFTER_COMMIT 事件）；
+ * 站点存在性经 SiteRepository.existsById 校验（白名单已关闭）。零写侧 Mapper 依赖。
  *
  * <p>修复生产级问题（对齐工程原则）：
  * <ul>
@@ -46,20 +46,20 @@ public class PageService {
 
     private final PageRepository pageRepository;
     private final PublishedPageProjection publishedPageProjection;
-    private final SiteMapper siteMapper;
-    
+    private final SiteRepository siteRepository;
+
     private final PageVersionService versionService;
 
     public PageService(PageRepository pageRepository, PublishedPageProjection publishedPageProjection,
-                       SiteMapper siteMapper, PageVersionService versionService) {
+                       SiteRepository siteRepository, PageVersionService versionService) {
         this.pageRepository = pageRepository;
         this.publishedPageProjection = publishedPageProjection;
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
         this.versionService = versionService;
     }
 
     public List<PageResponse> list(String siteId) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         return pageRepository.listBySiteId(siteId).stream().map(PageResponse::fromEntity).collect(Collectors.toList());
     }
 
@@ -73,7 +73,7 @@ public class PageService {
 
     @Transactional(rollbackFor = Exception.class)
     public PageResponse create(String siteId, String name, String path, String status, JsonNode schema, JsonNode seo) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         // 聚合根工厂默认 draft；status 非 draft 时校验后设（聚合根状态机守护）
         PageAggregate agg = PageAggregate.newPage(
                 UUID.randomUUID().toString(), siteId, name, path, schemaToJson(schema), jsonToString(seo));

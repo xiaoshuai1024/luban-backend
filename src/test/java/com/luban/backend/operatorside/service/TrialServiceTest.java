@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
 class TrialServiceTest {
 
     @Mock private SubscriptionRepository subscriptionRepository;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private DomainEventPublisher eventPublisher;
 
     private TrialService service;
 
@@ -121,8 +121,8 @@ class TrialServiceTest {
 
         service.expireTrials();
 
-        // expireTrial() 产 SubscriptionExpiredEvent → publishEvent 至少调用 1 次
+        // expireTrial() 产 SubscriptionExpiredEvent → publishAll 至少调用 1 次
         verify(eventPublisher, atLeastOnce())
-                .publishEvent(any(com.luban.backend.shared.domain.event.SubscriptionExpiredEvent.class));
+                .publishAll(org.mockito.ArgumentMatchers.anyList());
     }
 }

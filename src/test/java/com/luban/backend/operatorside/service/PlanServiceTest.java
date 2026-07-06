@@ -2,7 +2,7 @@ package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.dto.PlanResponse;
 import com.luban.backend.shared.entity.Plan;
-import com.luban.backend.shared.mapper.PlanMapper;
+import com.luban.backend.shared.repository.PlanRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,6 +10,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -23,13 +24,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class PlanServiceTest {
 
-    @Mock private PlanMapper planMapper;
+    @Mock private PlanRepository planRepository;
 
     private PlanService service;
 
     @BeforeEach
     void setUp() {
-        service = new PlanService(planMapper);
+        service = new PlanService(planRepository);
     }
 
     private Plan plan(String code, String gatesJson) {
@@ -65,7 +66,7 @@ class PlanServiceTest {
     @Test
     void listPlans_maps_to_response_with_parsed_gates() {
         Plan p = plan("pro", "[\"analytics\"]");
-        when(planMapper.listAll()).thenReturn(List.of(p));
+        when(planRepository.listAll()).thenReturn(List.of(p));
 
         List<PlanResponse> result = service.listPlans();
 
@@ -77,7 +78,7 @@ class PlanServiceTest {
     @Test
     void getPlan_returns_mapper_result() {
         Plan p = plan("free", "[]");
-        when(planMapper.getByCode("free")).thenReturn(p);
+        when(planRepository.getByCode("free")).thenReturn(Optional.of(p));
 
         Plan result = service.getPlan("free");
 
@@ -86,7 +87,7 @@ class PlanServiceTest {
 
     @Test
     void isGateEnabled_returns_true_when_plan_contains_gate() {
-        when(planMapper.getByCode("pro")).thenReturn(plan("pro", "[\"analytics\",\"ab_testing\"]"));
+        when(planRepository.getByCode("pro")).thenReturn(Optional.of(plan("pro", "[\"analytics\",\"ab_testing\"]")));
 
         assertThat(service.isGateEnabled("pro", "analytics")).isTrue();
         assertThat(service.isGateEnabled("pro", "ab_testing")).isTrue();
@@ -94,14 +95,14 @@ class PlanServiceTest {
 
     @Test
     void isGateEnabled_returns_false_when_plan_does_not_contain_gate() {
-        when(planMapper.getByCode("free")).thenReturn(plan("free", "[]"));
+        when(planRepository.getByCode("free")).thenReturn(Optional.of(plan("free", "[]")));
 
         assertThat(service.isGateEnabled("free", "analytics")).isFalse();
     }
 
     @Test
     void isGateEnabled_returns_false_when_plan_not_found() {
-        when(planMapper.getByCode("ghost")).thenReturn(null);
+        when(planRepository.getByCode("ghost")).thenReturn(Optional.empty());
 
         assertThat(service.isGateEnabled("ghost", "analytics")).isFalse();
     }

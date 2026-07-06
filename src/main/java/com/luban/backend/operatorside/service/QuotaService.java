@@ -4,7 +4,7 @@ import com.luban.backend.shared.domain.SubscriptionAggregate;
 import com.luban.backend.shared.entity.Plan;
 import com.luban.backend.shared.entity.Subscription;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.PlanMapper;
+import com.luban.backend.shared.repository.PlanRepository;
 import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.springframework.stereotype.Service;
 
@@ -31,12 +31,12 @@ public class QuotaService {
     private static final String FREE_PLAN = "free";
 
     private final SubscriptionRepository subscriptionRepository;
-    private final PlanMapper planMapper;
+    private final PlanRepository planRepository;
 
     public QuotaService(SubscriptionRepository subscriptionRepository,
-                        PlanMapper planMapper) {
+                        PlanRepository planRepository) {
         this.subscriptionRepository = subscriptionRepository;
-        this.planMapper = planMapper;
+        this.planRepository = planRepository;
     }
 
     /**
@@ -75,11 +75,11 @@ public class QuotaService {
 
     private Plan resolvePlan(String userId) {
         SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
-        if (agg == null) return planMapper.getByCode(FREE_PLAN);
+        if (agg == null) return planRepository.getByCode(FREE_PLAN).orElse(null);
         Subscription sub = agg.toSubscription();
         String planCode = sub != null ? sub.getPlanCode() : FREE_PLAN;
-        Plan plan = planMapper.getByCode(planCode);
-        return plan != null ? plan : planMapper.getByCode(FREE_PLAN);
+        Plan plan = planRepository.getByCode(planCode).orElse(null);
+        return plan != null ? plan : planRepository.getByCode(FREE_PLAN).orElse(null);
     }
 
     private int quotaForMetric(Plan plan, String metric) {

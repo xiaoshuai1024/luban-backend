@@ -7,8 +7,8 @@ import com.luban.backend.shared.domain.FormAggregate;
 import com.luban.backend.shared.dto.FormResponse;
 import com.luban.backend.shared.dto.FormSaveRequest;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.FormRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  *
  * <p>持久化经 {@link FormRepository}（不直接依赖 FormMapper/LeadMapper，ArchUnit 守护）。
  * JSON 序列化（JsonNode→String）属本服务 infra，序列化后传聚合根。
- * SITE_NOT_FOUND 跨聚合种子校验保留在 Service（SiteMapper，plan §3.4 读模型白名单）。
+ * SITE_NOT_FOUND 跨聚合种子校验保留在 Service（经 SiteRepository.existsById 校验站点存在）。
  */
 @Service
 public class FormService {
@@ -32,16 +32,16 @@ public class FormService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(FormService.class);
 
     private final FormRepository formRepository;
-    private final SiteMapper siteMapper;
-    
+    private final SiteRepository siteRepository;
 
-    public FormService(FormRepository formRepository, SiteMapper siteMapper) {
+
+    public FormService(FormRepository formRepository, SiteRepository siteRepository) {
         this.formRepository = formRepository;
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
     }
 
     public List<FormResponse> list(String siteId) {
-        if (siteMapper.getById(siteId) == null) { log.warn("站点不存在 siteId={}（疑似越权）", siteId); throw BusinessException.siteNotFound(); }
+        if (!siteRepository.existsById(siteId)) { log.warn("站点不存在 siteId={}（疑似越权）", siteId); throw BusinessException.siteNotFound(); }
         return formRepository.listBySiteId(siteId).stream()
                 .map(FormResponse::fromEntity).collect(Collectors.toList());
     }
@@ -54,7 +54,7 @@ public class FormService {
 
     @Transactional(rollbackFor = Exception.class)
     public FormResponse create(FormSaveRequest req) {
-        if (siteMapper.getById(req.siteId()) == null) {
+        if (!siteRepository.existsById(req.siteId())) {
             log.warn("站点不存在 siteId={}（疑似越权）", req.siteId());
             throw BusinessException.siteNotFound();
         }

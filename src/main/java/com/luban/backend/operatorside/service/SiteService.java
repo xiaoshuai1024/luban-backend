@@ -5,7 +5,7 @@ import com.luban.backend.shared.domain.SiteAggregate;
 import com.luban.backend.shared.dto.SiteResponse;
 import com.luban.backend.shared.exception.BusinessException;
 import com.luban.backend.shared.repository.SiteRepository;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,10 +26,10 @@ public class SiteService {
     private final SiteRepository siteRepository;
     private final SiteCascadeDeleter cascadeDeleter;
     
-    private final ApplicationEventPublisher eventPublisher;
+    private final DomainEventPublisher eventPublisher;
 
     public SiteService(SiteRepository siteRepository, SiteCascadeDeleter cascadeDeleter,
-                       ApplicationEventPublisher eventPublisher) {
+                       DomainEventPublisher eventPublisher) {
         this.siteRepository = siteRepository;
         this.cascadeDeleter = cascadeDeleter;
         this.eventPublisher = eventPublisher;
@@ -114,6 +114,6 @@ public class SiteService {
         cascadeDeleter.deleteChildren(id);
         siteRepository.deleteById(id);
         // 事务提交后发布事件（AFTER_COMMIT 由 @TransactionalEventListener 消费）
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 }

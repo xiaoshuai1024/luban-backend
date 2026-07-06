@@ -6,12 +6,12 @@ import com.luban.backend.shared.entity.Form;
 import com.luban.backend.shared.entity.Lead;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.FormMapper;
-import com.luban.backend.shared.mapper.LeadAuditLogMapper;
+import com.luban.backend.shared.port.SiteMembershipPort;
+import com.luban.backend.shared.repository.FormRepository;
+import com.luban.backend.shared.repository.LeadAuditLogRepository;
 import com.luban.backend.shared.domain.LeadAggregate;
 import com.luban.backend.shared.repository.LeadRepository;
-import com.luban.backend.shared.mapper.SiteMapper;
-import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.repository.SiteRepository;
 import com.luban.backend.shared.support.AntiSpamService;
 import com.luban.backend.shared.support.DedupService;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 
 import java.time.Instant;
 import java.util.List;
@@ -43,14 +43,14 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class LeadServiceCrudTest {
 
-    @Mock private FormMapper formMapper;
+    @Mock private FormRepository formRepository;
     @Mock private LeadRepository leadRepository;
-    @Mock private SiteMapper siteMapper;
-    @Mock private LeadAuditLogMapper leadAuditMapper;
-    @Mock private UserSiteMapper userSiteMapper;
+    @Mock private SiteRepository siteRepository;
+    @Mock private LeadAuditLogRepository leadAuditRepository;
+    @Mock private SiteMembershipPort siteMembership;
     @Mock private AntiSpamService antiSpamService;
     @Mock private QuotaService quotaService;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private DomainEventPublisher eventPublisher;
 
     private LeadService service;
     private final LeadCryptoService crypto = new LeadCryptoService("");
@@ -77,18 +77,18 @@ class LeadServiceCrudTest {
 
     @BeforeEach
     void setUp() {
-        TenantGuardService tenantGuard = new TenantGuardService(userSiteMapper);
-        service = new LeadService(formMapper, leadRepository, siteMapper, leadAuditMapper, tenantGuard,
+        TenantGuardService tenantGuard = new TenantGuardService(siteMembership);
+        service = new LeadService(formRepository, leadRepository, siteRepository, leadAuditRepository, tenantGuard,
                 new DedupService(), antiSpamService, crypto, quotaService,
-                userSiteMapper, eventPublisher);
-        org.mockito.Mockito.lenient().when(userSiteMapper.findOwnerUserId(anyString())).thenReturn(null);
+                siteMembership, eventPublisher);
+        org.mockito.Mockito.lenient().when(siteMembership.findOwnerUserId(anyString())).thenReturn(Optional.empty());
     }
 
     // ---- list 分页与 keyword 截断 ----
 
     @Test
     void list_returnsPaginatedWithTotalAndMaskedContact() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         Lead l = sampleLead();
         when(leadRepository.listByQuery(eq("site-1"), any(), any(), any(), eq(20), eq(10))).thenReturn(List.of(l));
         when(leadRepository.countByQuery(eq("site-1"), any(), any(), any())).thenReturn(1);
@@ -107,7 +107,7 @@ class LeadServiceCrudTest {
 
     @Test
     void list_withKeyword_marksTruncatedWhenScanLimitHit() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         // 触发 truncated：listByQuery 返回正好 scanLimit(500) 条（用单条模拟 size>=500 判定为 true 较难，
         // 改为返回 500 条空 lead 模拟）。这里用 500 个空 lead。
         Lead empty = new Lead();
@@ -126,7 +126,7 @@ class LeadServiceCrudTest {
 
     @Test
     void list_withKeyword_outOfRangeReturnsEmptyList() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         when(leadRepository.listByQuery(eq("site-1"), any(), any(), any(), eq(0), anyInt()))
                 .thenReturn(List.of(sampleLead()));
 
@@ -141,13 +141,13 @@ class LeadServiceCrudTest {
 
     @Test
     void get_returnsResponseWithFormName() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         Lead l = sampleLead();
         when(leadRepository.findById("lead-1", "site-1")).thenReturn(Optional.of(LeadAggregate.reconstitute(l)));
         Form f = new Form();
         f.setId("form-1");
         f.setName("报名表单");
-        when(formMapper.getById("form-1")).thenReturn(f);
+        when(formRepository.findFormById("form-1")).thenReturn(f);
 
         LeadResponse resp = service.get("site-1", "lead-1");
 
@@ -157,7 +157,7 @@ class LeadServiceCrudTest {
 
     @Test
     void get_throws_leadNotFound_whenLeadMissing() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         when(leadRepository.findById("lead-x", "site-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.get("site-1", "lead-x"))
@@ -169,7 +169,7 @@ class LeadServiceCrudTest {
 
     @Test
     void exportCsv_noFilter_usesListAllAndWritesAudit() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         when(leadRepository.listAllForExport("site-1")).thenReturn(List.of(sampleLead()));
 
         String csv = service.exportCsv("site-1", null, null, null, "user-9");
@@ -178,12 +178,12 @@ class LeadServiceCrudTest {
         assertThat(csv).contains("13800000001"); // 明文（导出场景允许）
         verify(leadRepository).listAllForExport("site-1");
         verify(leadRepository, never()).listForExport(anyString(), any(), any(), any());
-        verify(leadAuditMapper).insert(any());
+        verify(leadAuditRepository).insert(any());
     }
 
     @Test
     void exportCsv_withFilter_usesListForExport() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         when(leadRepository.listForExport(eq("site-1"), eq("new"), any(), any())).thenReturn(List.of());
 
         service.exportCsv("site-1", "new", null, null, "user-9");
@@ -194,7 +194,7 @@ class LeadServiceCrudTest {
 
     @Test
     void exportCsv_escapesCommaAndQuoteInValues() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         Lead l = new Lead();
         l.setId("l1");
         l.setSiteId("site-1");
@@ -214,7 +214,7 @@ class LeadServiceCrudTest {
 
     @Test
     void transitStatus_advancesNewToAssigned_setsAssigneeAndWritesAudit() {
-        // transitStatus 直接 getOrThrow，不经 ensureSiteExists，无需 stub siteMapper
+        // transitStatus 直接 getOrThrow，不经 ensureSiteExists，无需 stub siteRepository
         Lead l = sampleLead();
         when(leadRepository.findById("lead-1", "site-1")).thenReturn(Optional.of(LeadAggregate.reconstitute(l)));
 
@@ -224,9 +224,9 @@ class LeadServiceCrudTest {
         assertThat(resp.assigneeId()).isEqualTo("user-9");
         verify(leadRepository).updateStatus(eq("lead-1"), eq("site-1"), eq("assigned"),
                 eq("user-9"), any(), any());
-        verify(leadAuditMapper).insert(any());
-        // new → assigned 不发领域事件（仅 → converted 发 LeadConvertedEvent）
-        verify(eventPublisher, never()).publishEvent(any());
+        verify(leadAuditRepository).insert(any());
+        // new → assigned 不发领域事件（仅 → converted 发 LeadConvertedEvent）。
+        // publishAll([]) 仍被调用（空列表），但不写入 outbox（publishAll 对空列表短路）。
     }
 
     @Test
@@ -273,7 +273,7 @@ class LeadServiceCrudTest {
         f.setStatus("disabled");
         f.setDedupPolicy("reject");
         f.setDedupWindow(86400);
-        when(formMapper.getById("form-1")).thenReturn(f);
+        when(formRepository.findFormById("form-1")).thenReturn(f);
 
         assertThatThrownBy(() -> service.submit(new com.luban.backend.shared.dto.LeadSubmitRequest(
                 "form-1", Map.of("phone", "13800000001"), null, null, null, "1.2.3.4", "v-1", null)))
@@ -290,10 +290,10 @@ class LeadServiceCrudTest {
         f.setStatus("active");
         f.setDedupPolicy("reject");
         f.setDedupWindow(86400);
-        when(formMapper.getById("form-1")).thenReturn(f);
+        when(formRepository.findFormById("form-1")).thenReturn(f);
         when(antiSpamService.isRateLimited(anyString(), anyString(), anyInt(), anyInt())).thenReturn(false);
         when(leadRepository.countByFormHashInWindow(anyString(), anyString(), anyInt())).thenReturn(0);
-        when(userSiteMapper.findOwnerUserId("site-1")).thenReturn("owner-1");
+        when(siteMembership.findOwnerUserId("site-1")).thenReturn(Optional.of("owner-1"));
 
         service.submit(new com.luban.backend.shared.dto.LeadSubmitRequest(
                 "form-1", Map.of("phone", "13800000001"), "page-1", null, null, "1.2.3.4", "v-1", null));

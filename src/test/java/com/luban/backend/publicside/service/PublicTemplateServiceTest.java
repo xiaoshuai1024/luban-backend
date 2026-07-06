@@ -3,9 +3,7 @@ package com.luban.backend.publicside.service;
 import com.luban.backend.shared.dto.TemplateResponse;
 import com.luban.backend.shared.entity.Template;
 import com.luban.backend.shared.entity.TemplateVersion;
-import com.luban.backend.shared.mapper.TemplateInstallationMapper;
-import com.luban.backend.shared.mapper.TemplateMapper;
-import com.luban.backend.shared.mapper.TemplateVersionMapper;
+import com.luban.backend.shared.port.TemplateMarketplacePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -26,15 +25,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class PublicTemplateServiceTest {
 
-    @Mock private TemplateMapper templateMapper;
-    @Mock private TemplateVersionMapper versionMapper;
-    @Mock private TemplateInstallationMapper installationMapper;
+    @Mock private TemplateMarketplacePort marketplacePort;
 
     private PublicTemplateService service;
 
     @BeforeEach
     void setUp() {
-        service = new PublicTemplateService(templateMapper, versionMapper, installationMapper);
+        service = new PublicTemplateService(marketplacePort);
     }
 
     private Template publishedTemplate() {
@@ -51,8 +48,8 @@ class PublicTemplateServiceTest {
     @Test
     void listMarketplace_maps_templates_with_install_counts() {
         Template t = publishedTemplate();
-        when(templateMapper.listMarketplace()).thenReturn(List.of(t));
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(5);
+        when(marketplacePort.listMarketplace()).thenReturn(List.of(t));
+        when(marketplacePort.countInstallations("t-1")).thenReturn(5);
 
         List<TemplateResponse> result = service.listMarketplace();
 
@@ -63,7 +60,7 @@ class PublicTemplateServiceTest {
 
     @Test
     void listMarketplace_returns_empty_when_no_templates() {
-        when(templateMapper.listMarketplace()).thenReturn(List.of());
+        when(marketplacePort.listMarketplace()).thenReturn(List.of());
 
         List<TemplateResponse> result = service.listMarketplace();
 
@@ -73,8 +70,8 @@ class PublicTemplateServiceTest {
     @Test
     void listByCategory_filters_by_category() {
         Template t = publishedTemplate();
-        when(templateMapper.listMarketplaceByCategory("saas")).thenReturn(List.of(t));
-        when(installationMapper.countByTemplateId("t-1")).thenReturn(0);
+        when(marketplacePort.listMarketplaceByCategory("saas")).thenReturn(List.of(t));
+        when(marketplacePort.countInstallations("t-1")).thenReturn(0);
 
         List<TemplateResponse> result = service.listByCategory("saas");
 
@@ -84,10 +81,10 @@ class PublicTemplateServiceTest {
 
     @Test
     void getSchema_returns_latest_version_schema_for_published_template() {
-        when(templateMapper.getById("t-1")).thenReturn(publishedTemplate());
+        when(marketplacePort.getById("t-1")).thenReturn(Optional.of(publishedTemplate()));
         TemplateVersion v = new TemplateVersion();
         v.setSchemaJson("{\"components\":[]}");
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(v);
+        when(marketplacePort.getLatestVersion("t-1")).thenReturn(Optional.of(v));
 
         String schema = service.getSchema("t-1");
 
@@ -96,7 +93,7 @@ class PublicTemplateServiceTest {
 
     @Test
     void getSchema_returns_null_when_template_not_found() {
-        when(templateMapper.getById("t-x")).thenReturn(null);
+        when(marketplacePort.getById("t-x")).thenReturn(Optional.empty());
 
         assertThat(service.getSchema("t-x")).isNull();
     }
@@ -106,15 +103,15 @@ class PublicTemplateServiceTest {
         // draft/archived 不可见于市场
         Template t = publishedTemplate();
         t.setStatus("draft");
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(marketplacePort.getById("t-1")).thenReturn(Optional.of(t));
 
         assertThat(service.getSchema("t-1")).isNull();
     }
 
     @Test
     void getSchema_returns_null_when_no_version() {
-        when(templateMapper.getById("t-1")).thenReturn(publishedTemplate());
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(null);
+        when(marketplacePort.getById("t-1")).thenReturn(Optional.of(publishedTemplate()));
+        when(marketplacePort.getLatestVersion("t-1")).thenReturn(Optional.empty());
 
         assertThat(service.getSchema("t-1")).isNull();
     }
@@ -124,10 +121,10 @@ class PublicTemplateServiceTest {
         // featured 也属 marketplace 可见
         Template t = publishedTemplate();
         t.setStatus("featured");
-        when(templateMapper.getById("t-1")).thenReturn(t);
+        when(marketplacePort.getById("t-1")).thenReturn(Optional.of(t));
         TemplateVersion v = new TemplateVersion();
         v.setSchemaJson("{}");
-        when(versionMapper.getLatestByTemplateId("t-1")).thenReturn(v);
+        when(marketplacePort.getLatestVersion("t-1")).thenReturn(Optional.of(v));
 
         assertThat(service.getSchema("t-1")).isEqualTo("{}");
     }

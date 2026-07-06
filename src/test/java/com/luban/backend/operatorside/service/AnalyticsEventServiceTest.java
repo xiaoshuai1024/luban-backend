@@ -3,7 +3,7 @@ package com.luban.backend.operatorside.service;
 import com.luban.backend.shared.crypto.LeadCryptoService;
 import com.luban.backend.shared.dto.AnalyticsEventInput;
 import com.luban.backend.shared.entity.AnalyticsEvent;
-import com.luban.backend.shared.mapper.AnalyticsEventMapper;
+import com.luban.backend.shared.repository.AnalyticsEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,13 +31,13 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class AnalyticsEventServiceTest {
 
-    @Mock private AnalyticsEventMapper eventMapper;
+    @Mock private AnalyticsEventRepository eventRepository;
 
     private AnalyticsEventService service;
 
     @BeforeEach
     void setUp() {
-        service = new AnalyticsEventService(eventMapper, new LeadCryptoService(""));
+        service = new AnalyticsEventService(eventRepository, new LeadCryptoService(""));
     }
 
     private AnalyticsEventInput input(String type) {
@@ -49,7 +49,7 @@ class AnalyticsEventServiceTest {
         int count = service.receiveBatch("site-1", null, "1.2.3.4", "v-1");
 
         assertThat(count).isZero();
-        verify(eventMapper, never()).insert(any());
+        verify(eventRepository, never()).insert(any());
     }
 
     @Test
@@ -57,7 +57,7 @@ class AnalyticsEventServiceTest {
         int count = service.receiveBatch("site-1", List.of(), "1.2.3.4", "v-1");
 
         assertThat(count).isZero();
-        verify(eventMapper, never()).insert(any());
+        verify(eventRepository, never()).insert(any());
     }
 
     @Test
@@ -68,7 +68,7 @@ class AnalyticsEventServiceTest {
 
         assertThat(count).isEqualTo(2);
         ArgumentCaptor<AnalyticsEvent> captor = ArgumentCaptor.forClass(AnalyticsEvent.class);
-        verify(eventMapper, times(2)).insert(captor.capture());
+        verify(eventRepository, times(2)).insert(captor.capture());
         AnalyticsEvent first = captor.getAllValues().get(0);
         assertThat(first.getSiteId()).isEqualTo("site-1");
         assertThat(first.getVisitorId()).isEqualTo("v-1");
@@ -88,7 +88,7 @@ class AnalyticsEventServiceTest {
         int count = service.receiveBatch("site-1", events, "1.2.3.4", "v-1");
 
         assertThat(count).isEqualTo(50);
-        verify(eventMapper, times(50)).insert(any());
+        verify(eventRepository, times(50)).insert(any());
     }
 
     @Test
@@ -98,13 +98,13 @@ class AnalyticsEventServiceTest {
         events.add(input("page_view"));      // ok
         events.add(input("form_submit"));    // will throw
         events.add(input("page_view"));      // ok
-        doThrow(new RuntimeException("db down")).when(eventMapper).insert(any());
+        doThrow(new RuntimeException("db down")).when(eventRepository).insert(any());
 
         int count = service.receiveBatch("site-1", events, "1.2.3.4", "v-1");
 
         // 全部 insert 都抛异常 → count=0（容错：单条失败计入跳过，不传播）
         assertThat(count).isZero();
-        verify(eventMapper, times(3)).insert(any());
+        verify(eventRepository, times(3)).insert(any());
     }
 
     @Test
@@ -114,7 +114,7 @@ class AnalyticsEventServiceTest {
         service.receiveBatch("site-1", List.of(ev), "1.2.3.4", "v-1");
 
         ArgumentCaptor<AnalyticsEvent> captor = ArgumentCaptor.forClass(AnalyticsEvent.class);
-        verify(eventMapper).insert(captor.capture());
+        verify(eventRepository).insert(captor.capture());
         assertThat(captor.getValue().getClientTs()).isNull();
     }
 
@@ -124,6 +124,6 @@ class AnalyticsEventServiceTest {
         int count = service.receiveBatch("site-1", List.of(input("page_view")), null, "v-1");
 
         assertThat(count).isEqualTo(1);
-        verify(eventMapper).insert(any());
+        verify(eventRepository).insert(any());
     }
 }

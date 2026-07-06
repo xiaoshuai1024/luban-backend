@@ -4,8 +4,8 @@ import com.luban.backend.operatorside.service.FormService;
 import com.luban.backend.shared.domain.FormAggregate;
 import com.luban.backend.shared.entity.Form;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.FormRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,13 +28,13 @@ import static org.mockito.Mockito.when;
 class FormServiceTest {
 
     @Mock private FormRepository formRepository;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
 
     private FormService service;
 
     @BeforeEach
     void setUp() {
-        service = new FormService(formRepository, siteMapper);
+        service = new FormService(formRepository, siteRepository);
     }
 
     @Test

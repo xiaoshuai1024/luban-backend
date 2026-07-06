@@ -1,5 +1,6 @@
 package com.luban.backend.publicside.controller;
 
+import com.luban.backend.shared.dto.AnalyticsBatchRequest;
 import com.luban.backend.shared.dto.AnalyticsEventInput;
 import com.luban.backend.shared.port.AnalyticsIngestPort;
 import jakarta.servlet.http.HttpServletRequest;
@@ -46,7 +47,4 @@ public class PublicAnalyticsController {
         if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
         return req.getRemoteAddr();
     }
-
-    /** 批量请求体。 */
-    public record AnalyticsBatchRequest(String siteId, List<AnalyticsEventInput> events) {}
 }

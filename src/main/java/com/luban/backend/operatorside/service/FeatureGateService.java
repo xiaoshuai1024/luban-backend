@@ -2,9 +2,9 @@ package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.entity.FeatureGate;
 import com.luban.backend.shared.entity.Subscription;
-import com.luban.backend.shared.mapper.FeatureGateMapper;
-import com.luban.backend.shared.mapper.SubscriptionMapper;
-import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.port.SiteMembershipPort;
+import com.luban.backend.shared.repository.FeatureGateRepository;
+import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -42,18 +42,18 @@ public class FeatureGateService {
     private static final Set<String> V01_KEYS = Set.of(
             "lead_capture", "realtime_collab", "page_versioning", "poster_export");
 
-    private final FeatureGateMapper featureGateMapper;
-    private final UserSiteMapper userSiteMapper;
-    private final SubscriptionMapper subscriptionMapper;
+    private final FeatureGateRepository featureGateRepository;
+    private final SiteMembershipPort siteMembership;
+    private final SubscriptionRepository subscriptionRepository;
     private final PlanService planService;
 
-    public FeatureGateService(FeatureGateMapper featureGateMapper,
-                              UserSiteMapper userSiteMapper,
-                              SubscriptionMapper subscriptionMapper,
+    public FeatureGateService(FeatureGateRepository featureGateRepository,
+                              SiteMembershipPort siteMembership,
+                              SubscriptionRepository subscriptionRepository,
                               PlanService planService) {
-        this.featureGateMapper = featureGateMapper;
-        this.userSiteMapper = userSiteMapper;
-        this.subscriptionMapper = subscriptionMapper;
+        this.featureGateRepository = featureGateRepository;
+        this.siteMembership = siteMembership;
+        this.subscriptionRepository = subscriptionRepository;
         this.planService = planService;
     }
 
@@ -68,17 +68,17 @@ public class FeatureGateService {
         if (siteId == null || gateKey == null) return true;
 
         // 1. site 级显式关闭 → 关闭（最高优先级）
-        FeatureGate gate = featureGateMapper.getBySiteAndKey(siteId, gateKey);
+        FeatureGate gate = featureGateRepository.findBySiteAndKey(siteId, gateKey).orElse(null);
         if (gate != null && !gate.isEnabled()) return false;
 
         // 2. site 未显式关闭 → 查 plan.gates 判定
-        String ownerUserId = userSiteMapper.findOwnerUserId(siteId);
+        String ownerUserId = siteMembership.findOwnerUserId(siteId).orElse(null);
         if (ownerUserId == null) {
             // 无 owner 记录（历史站点）→ 向后兼容默认开启
             return gate == null || gate.isEnabled();
         }
 
-        Subscription sub = subscriptionMapper.getByUserId(ownerUserId);
+        Subscription sub = subscriptionRepository.findEntityByUserId(ownerUserId);
         if (sub == null) {
             // owner 无订阅记录 → 向后兼容默认开启
             return gate == null || gate.isEnabled();
@@ -112,7 +112,7 @@ public class FeatureGateService {
         gate.setGateKey(gateKey);
         gate.setEnabled(enabled);
         gate.setUpdatedAt(Instant.now());
-        featureGateMapper.upsert(gate);
+        featureGateRepository.upsert(gate);
         return enabled;
     }
 }

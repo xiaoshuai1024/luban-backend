@@ -43,7 +43,7 @@ public class DefaultLeadNotifyService implements LeadNotifyService {
     }
 
     @Override
-    @Async("leadNotifyExecutor")
+    @Async("domainEventExecutor")
     public void notifyNewLead(Lead lead, Form form) {
         if (webhookUrl == null || webhookUrl.isBlank()) {
             log.info("新线索 [form={}, lead={}, site={}]（未配置 Webhook，跳过通知）",

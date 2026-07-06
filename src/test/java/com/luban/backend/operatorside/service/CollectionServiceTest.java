@@ -9,8 +9,8 @@ import com.luban.backend.shared.entity.ContentCollection;
 import com.luban.backend.shared.entity.ContentCollectionItem;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.CollectionRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,14 +35,14 @@ import static org.mockito.Mockito.when;
 class CollectionServiceTest {
 
     @Mock private CollectionRepository collectionRepository;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
 
     private CollectionService service;
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        service = new CollectionService(collectionRepository, siteMapper);
+        service = new CollectionService(collectionRepository, siteRepository);
     }
 
     private JsonNode node(String json) {
@@ -51,7 +51,7 @@ class CollectionServiceTest {
 
     @Test
     void list_returns_collections_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         ContentCollection c = new ContentCollection();
         c.setId("c-1");
         c.setName("商品");
@@ -65,7 +65,7 @@ class CollectionServiceTest {
 
     @Test
     void list_throws_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("site-x"))
                 .isInstanceOf(BusinessException.class)
@@ -95,7 +95,7 @@ class CollectionServiceTest {
 
     @Test
     void create_inserts_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         CollectionResponse resp = service.create("site-1", "新集合", node("{}"), null);
 
@@ -105,7 +105,7 @@ class CollectionServiceTest {
 
     @Test
     void create_throws_when_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.create("site-x", "n", node("{}"), null))
                 .isInstanceOf(BusinessException.class)

@@ -5,8 +5,8 @@ import com.luban.backend.shared.dto.FormResponse;
 import com.luban.backend.shared.entity.Form;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.FormRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,18 +30,18 @@ import static org.mockito.Mockito.when;
 class FormServiceCrudTest {
 
     @Mock private FormRepository formRepository;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
 
     private FormService service;
 
     @BeforeEach
     void setUp() {
-        service = new FormService(formRepository, siteMapper);
+        service = new FormService(formRepository, siteRepository);
     }
 
     @Test
     void list_returns_forms_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
         Form f = new Form();
         f.setId("f-1");
         f.setName("表单A");
@@ -55,7 +55,7 @@ class FormServiceCrudTest {
 
     @Test
     void list_throws_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("site-x"))
                 .isInstanceOf(BusinessException.class)
@@ -86,7 +86,7 @@ class FormServiceCrudTest {
 
     @Test
     void create_inserts_when_site_exists() {
-        when(siteMapper.getById("site-1")).thenReturn(new Site());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         FormResponse resp = service.create(new com.luban.backend.shared.dto.FormSaveRequest(
                 "site-1", "page-1", "新表单", null, null, null, null, "reject", null, "active"));
@@ -97,7 +97,7 @@ class FormServiceCrudTest {
 
     @Test
     void create_throws_when_site_not_found() {
-        when(siteMapper.getById("site-x")).thenReturn(null);
+        when(siteRepository.existsById("site-x")).thenReturn(false);
 
         assertThatThrownBy(() -> service.create(new com.luban.backend.shared.dto.FormSaveRequest(
                 "site-x", "p", "n", null, null, null, null, null, null, null)))

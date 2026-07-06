@@ -2,7 +2,7 @@ package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.auth.UserContext;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.UserSiteMapper;
+import com.luban.backend.shared.port.SiteMembershipPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,13 +30,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class TenantGuardServiceTest {
 
-    @Mock private UserSiteMapper userSiteMapper;
+    @Mock private SiteMembershipPort siteMembership;
 
     private TenantGuardService guard;
 
     @BeforeEach
     void setUp() {
-        guard = new TenantGuardService(userSiteMapper);
+        guard = new TenantGuardService(siteMembership);
     }
 
     @AfterEach
@@ -49,8 +49,8 @@ class TenantGuardServiceTest {
         UserContext.set("user-1", "user");
 
         assertThatCode(() -> guard.ensureSiteAccess(null)).doesNotThrowAnyException();
-        // siteId null 直接 return，不查 mapper
-        verify(userSiteMapper, never()).exists(anyString(), anyString());
+        // siteId null 直接 return，不查 port
+        verify(siteMembership, never()).existsMembership(anyString(), anyString());
     }
 
     @Test
@@ -58,7 +58,7 @@ class TenantGuardServiceTest {
         UserContext.set("user-1", "user");
 
         assertThatCode(() -> guard.ensureSiteAccess("   ")).doesNotThrowAnyException();
-        verify(userSiteMapper, never()).exists(anyString(), anyString());
+        verify(siteMembership, never()).existsMembership(anyString(), anyString());
     }
 
     @Test
@@ -67,7 +67,7 @@ class TenantGuardServiceTest {
         UserContext.clear();   // 无 user
 
         assertThatCode(() -> guard.ensureSiteAccess("site-1")).doesNotThrowAnyException();
-        verify(userSiteMapper, never()).exists(anyString(), anyString());
+        verify(siteMembership, never()).existsMembership(anyString(), anyString());
     }
 
     @Test
@@ -76,13 +76,13 @@ class TenantGuardServiceTest {
 
         assertThatCode(() -> guard.ensureSiteAccess("site-1")).doesNotThrowAnyException();
         // admin 直接放行，不查授权
-        verify(userSiteMapper, never()).exists(anyString(), anyString());
+        verify(siteMembership, never()).existsMembership(anyString(), anyString());
     }
 
     @Test
     void ensureSiteAccess_throws_when_non_admin_without_authorization() {
         UserContext.set("user-1", "user");
-        when(userSiteMapper.exists("user-1", "site-1")).thenReturn(0);
+        when(siteMembership.existsMembership("user-1", "site-1")).thenReturn(false);
 
         assertThatThrownBy(() -> guard.ensureSiteAccess("site-1"))
                 .isInstanceOf(BusinessException.class)
@@ -93,7 +93,7 @@ class TenantGuardServiceTest {
     @Test
     void ensureSiteAccess_allows_non_admin_with_authorization() {
         UserContext.set("user-1", "user");
-        when(userSiteMapper.exists("user-1", "site-1")).thenReturn(1);
+        when(siteMembership.existsMembership("user-1", "site-1")).thenReturn(true);
 
         assertThatCode(() -> guard.ensureSiteAccess("site-1")).doesNotThrowAnyException();
     }

@@ -16,8 +16,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public final class JsonUtil {
 
-    /** 共享 ObjectMapper 单例（线程安全）。 */
-    public static final ObjectMapper MAPPER = new ObjectMapper();
+    /** 共享 ObjectMapper 单例（线程安全）。注册 JavaTimeModule 支持 Instant 序列化（outbox 事件持久化）。 */
+    public static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
 
     private JsonUtil() {}   // 工具类禁止实例化
 

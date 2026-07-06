@@ -19,4 +19,8 @@ public interface TemplateInstallationMapper {
     /** 模板安装次数（市场展示用） */
     @Select("SELECT COUNT(*) FROM template_installations WHERE template_id = #{templateId}")
     int countByTemplateId(String templateId);
+
+    /** 按 (templateId, siteId) 计数——模板安装幂等去重用（防 relay 重投导致重复安装）。 */
+    @Select("SELECT COUNT(*) FROM template_installations WHERE template_id = #{templateId} AND site_id = #{siteId}")
+    int countByTemplateIdAndSiteId(@Param("templateId") String templateId, @Param("siteId") String siteId);
 }

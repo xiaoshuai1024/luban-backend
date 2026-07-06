@@ -23,6 +23,18 @@ public final class ChannelDomain {
     /** 短码格式：[a-zA-Z0-9_-]{1,32} */
     public static final String CODE_PATTERN = "^[a-zA-Z0-9_-]{1,32}$";
 
+    /**
+     * Channel 类型枚举（G1 修复：从 CampaignAggregate 迁入，Channel 自身关注点）。
+     * 渠道类型属 Channel 领域，不应寄生在 Campaign 聚合根上（SRP）。
+     */
+    public static final class ChannelType {
+        public static final String QRCODE = "qrcode";
+        public static final String H5 = "h5";
+        public static final String SOCIAL = "social";
+        public static final String AD = "ad";
+        public static final String MINIAPP = "miniapp";
+    }
+
     private static final String ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
 

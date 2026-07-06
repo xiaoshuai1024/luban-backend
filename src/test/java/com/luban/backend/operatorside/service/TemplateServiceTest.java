@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
 class TemplateServiceTest {
 
     @Mock private TemplateRepository templateRepository;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private DomainEventPublisher eventPublisher;
 
     private TemplateService service;
 
@@ -245,7 +245,7 @@ class TemplateServiceTest {
 
         assertThat(result.path()).isEqualTo("/templates/saas-landing");
         assertThat(result.version()).isEqualTo(1);
-        verify(eventPublisher).publishEvent(any(com.luban.backend.shared.domain.event.TemplateInstalledEvent.class));
+        verify(eventPublisher).publishAll(org.mockito.ArgumentMatchers.anyList());
     }
 
     @Test

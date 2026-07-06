@@ -45,6 +45,11 @@ public class SubscriptionRepositoryImpl implements SubscriptionRepository {
     }
 
     @Override
+    public Subscription findEntityByUserId(String userId) {
+        return subscriptionMapper.getByUserId(userId);
+    }
+
+    @Override
     @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public void save(SubscriptionAggregate aggregate) {
         Subscription entity = aggregate.toSubscription();

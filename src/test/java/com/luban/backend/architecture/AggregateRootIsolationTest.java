@@ -7,7 +7,6 @@ import com.tngtech.archunit.lang.ArchRule;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
-import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 import com.tngtech.archunit.core.domain.JavaModifier;
 
 /**
@@ -34,13 +33,13 @@ class AggregateRootIsolationTest {
      */
     @ArchTest
     static final ArchRule domain_should_not_have_framework_annotations =
-            freeze(noClasses().that().resideInAPackage("..shared.domain..")
+            noClasses().that().resideInAPackage("..shared.domain..")
                     .should().beAnnotatedWith("org.springframework.stereotype.Service")
                     .orShould().beAnnotatedWith("org.springframework.stereotype.Component")
                     .orShould().beAnnotatedWith("org.springframework.stereotype.Repository")
                     .orShould().beAnnotatedWith("org.springframework.context.annotation.Configuration")
                     .orShould().beAnnotatedWith("org.springframework.transaction.annotation.Transactional")
-                    .because("domain 层聚合根值对象领域事件必须保持框架无关纯 POJO"));
+                    .because("domain 层聚合根值对象领域事件必须保持框架无关纯 POJO");
 
     /**
      * domain 禁依赖 Spring / Jakarta 任何类型（不只是注解）。
@@ -49,11 +48,11 @@ class AggregateRootIsolationTest {
      */
     @ArchTest
     static final ArchRule domain_should_not_depend_on_spring_or_jakarta =
-            freeze(noClasses().that().resideInAPackage("..shared.domain..")
+            noClasses().that().resideInAPackage("..shared.domain..")
                     .should().dependOnClassesThat().resideInAnyPackage(
                             "org.springframework..", "jakarta..")
                     .because("domain 层必须零框架依赖纯 POJO, Spring jakarta 任何类型都禁;"
-                            + "错误码状态码用原始 int 或领域枚举表达, 框架映射留给基础设施层"));
+                            + "错误码状态码用原始 int 或领域枚举表达, 框架映射留给基础设施层");
 
     /**
      * domain 禁依赖持久化层与调用方。
@@ -61,19 +60,19 @@ class AggregateRootIsolationTest {
      */
     @ArchTest
     static final ArchRule domain_should_not_depend_on_infrastructure =
-            freeze(noClasses().that().resideInAPackage("..shared.domain..")
+            noClasses().that().resideInAPackage("..shared.domain..")
                     .should().dependOnClassesThat().resideInAnyPackage(
                             "..controller..", "..service..", "..mapper..",
                             "..operatorside.repository..", "..publicside..")
-                    .because("聚合根不感知持久化调用方; entity 引用经 Repository 在 Application Service 层注入"));
+                    .because("聚合根不感知持久化调用方; entity 引用经 Repository 在 Application Service 层注入");
 
     /**
      * 聚合根类（*Aggregate 后缀）须 final，防子类继承破坏不变量。
      */
     @ArchTest
     static final ArchRule aggregates_should_be_final =
-            freeze(classes().that().resideInAPackage("..shared.domain..")
+            classes().that().resideInAPackage("..shared.domain..")
                     .and().haveSimpleNameEndingWith("Aggregate")
                     .should().haveModifier(JavaModifier.FINAL)
-                    .because("聚合根须 final 防止子类破坏不变量"));
+                    .because("聚合根须 final 防止子类破坏不变量");
 }

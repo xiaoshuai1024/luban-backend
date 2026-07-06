@@ -17,6 +17,13 @@ public interface SiteMapper {
     @Select("SELECT id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at FROM sites WHERE slug = #{slug}")
     Site getBySlug(String slug);
 
+    /** 存在性校验（轻量 COUNT，替代 Service 层 getById 判 null 直连）。 */
+    @Select("SELECT COUNT(*) FROM sites WHERE id = #{id}")
+    int countById(String id);
+
+    @Select("SELECT COUNT(*) FROM sites WHERE slug = #{slug}")
+    int countBySlug(String slug);
+
     @Insert("INSERT INTO sites (id, name, slug, base_url, status, seo_json, analytics_json, created_at, updated_at) " +
            "VALUES (#{id}, #{name}, #{slug}, #{baseUrl}, #{status}, #{seoJson}, #{analyticsJson}, #{createdAt}, #{updatedAt})")
     int insert(Site site);

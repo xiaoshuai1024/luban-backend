@@ -9,9 +9,9 @@ import com.luban.backend.shared.dto.ChannelSaveRequest;
 import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.ChannelMapper;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.repository.ChannelRepository;
+import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,34 +36,34 @@ public class ChannelService {
     private static final int CODE_GEN_MAX_RETRY = 3;
     
 
-    private final ChannelMapper channelMapper;
-    private final SiteMapper siteMapper;
-    private final PageMapper pageMapper;
+    private final ChannelRepository channelRepository;
+    private final SiteRepository siteRepository;
+    private final PageRepository pageRepository;
     private final TenantGuardService tenantGuard;
 
-    public ChannelService(ChannelMapper channelMapper, SiteMapper siteMapper, PageMapper pageMapper,
-                          TenantGuardService tenantGuard) {
-        this.channelMapper = channelMapper;
-        this.siteMapper = siteMapper;
-        this.pageMapper = pageMapper;
+    public ChannelService(ChannelRepository channelRepository, SiteRepository siteRepository,
+                          PageRepository pageRepository, TenantGuardService tenantGuard) {
+        this.channelRepository = channelRepository;
+        this.siteRepository = siteRepository;
+        this.pageRepository = pageRepository;
         this.tenantGuard = tenantGuard;
     }
 
     /** 站点存在性 + 归属校验（统一入口，避免每个方法重复） */
     private void ensureSite(String siteId) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         tenantGuard.ensureSiteAccess(siteId);
     }
 
     public List<ChannelResponse> list(String siteId) {
         ensureSite(siteId);
-        return channelMapper.listBySiteId(siteId).stream()
+        return channelRepository.listBySiteId(siteId).stream()
                 .map(ChannelResponse::fromEntity).collect(Collectors.toList());
     }
 
     public ChannelResponse get(String siteId, String id) {
         ensureSite(siteId);
-        Channel ch = channelMapper.getByIdAndSiteId(id, siteId);
+        Channel ch = channelRepository.getByIdAndSiteId(id, siteId).orElse(null);
         if (ch == null) throw BusinessException.channelNotFound();
         return ChannelResponse.fromEntity(ch);
     }
@@ -78,7 +78,7 @@ public class ChannelService {
         ensureSite(req.siteId());
 
         // page 归属校验（防开放重定向）
-        Page page = pageMapper.getByIdAndSiteId(req.targetPageId(), req.siteId());
+        Page page = pageRepository.findEntityByIdAndSiteId(req.targetPageId(), req.siteId());
         if (page == null) throw BusinessException.pageNotFound();
 
         // 类型枚举校验
@@ -103,7 +103,7 @@ public class ChannelService {
             ch.setCreatedAt(Instant.now());
             ch.setUpdatedAt(Instant.now());
             try {
-                channelMapper.insert(ch);
+                channelRepository.insert(ch);
                 return ChannelResponse.fromEntity(ch);
             } catch (DataIntegrityViolationException e) {
                 log.debug("短码碰撞重试 {}/{}: {}", i + 1, CODE_GEN_MAX_RETRY, code);
@@ -118,7 +118,7 @@ public class ChannelService {
         ch.setCreatedAt(Instant.now());
         ch.setUpdatedAt(Instant.now());
         try {
-            channelMapper.insert(ch);
+            channelRepository.insert(ch);
         } catch (DataIntegrityViolationException e) {
             // 运营指定 code 的唯一约束冲突（uk_site_code / uk_short_url）→ 409
             throw BusinessException.channelCodeDuplicate();
@@ -127,9 +127,9 @@ public class ChannelService {
     }
 
     private static final java.util.Set<String> VALID_TYPES = java.util.Set.of(
-            CampaignAggregate.ChannelType.QRCODE, CampaignAggregate.ChannelType.H5,
-            CampaignAggregate.ChannelType.SOCIAL, CampaignAggregate.ChannelType.AD,
-            CampaignAggregate.ChannelType.MINIAPP);
+            ChannelDomain.ChannelType.QRCODE, ChannelDomain.ChannelType.H5,
+            ChannelDomain.ChannelType.SOCIAL, ChannelDomain.ChannelType.AD,
+            ChannelDomain.ChannelType.MINIAPP);
 
     private static boolean isValidType(String type) {
         return type != null && VALID_TYPES.contains(type);
@@ -138,12 +138,12 @@ public class ChannelService {
     @Transactional(rollbackFor = Exception.class)
     public ChannelResponse update(String siteId, String id, ChannelSaveRequest req) {
         ensureSite(siteId);
-        Channel existing = channelMapper.getByIdAndSiteId(id, siteId);
+        Channel existing = channelRepository.getByIdAndSiteId(id, siteId).orElse(null);
         if (existing == null) throw BusinessException.channelNotFound();
 
         // 若改 targetPageId，重新校验归属
         if (req.targetPageId() != null && !req.targetPageId().equals(existing.getTargetPageId())) {
-            Page page = pageMapper.getByIdAndSiteId(req.targetPageId(), siteId);
+            Page page = pageRepository.findEntityByIdAndSiteId(req.targetPageId(), siteId);
             if (page == null) throw BusinessException.pageNotFound();
             existing.setTargetPageId(req.targetPageId());
         }
@@ -158,16 +158,16 @@ public class ChannelService {
             ChannelDomain.transitionChannel(existing, req.status());
         }
         existing.setUpdatedAt(Instant.now());
-        channelMapper.update(existing);
+        channelRepository.update(existing);
         return ChannelResponse.fromEntity(existing);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(String siteId, String id) {
         ensureSite(siteId);
-        Channel existing = channelMapper.getByIdAndSiteId(id, siteId);
+        Channel existing = channelRepository.getByIdAndSiteId(id, siteId).orElse(null);
         if (existing == null) throw BusinessException.channelNotFound();
-        channelMapper.deleteByIdAndSiteId(id, siteId);
+        channelRepository.deleteByIdAndSiteId(id, siteId);
     }
 
     private String toJson(com.fasterxml.jackson.databind.JsonNode node) {

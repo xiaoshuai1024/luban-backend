@@ -3,8 +3,8 @@ package com.luban.backend.operatorside.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.backend.shared.entity.AnalyticsDaily;
-import com.luban.backend.shared.mapper.AnalyticsDailyMapper;
-import com.luban.backend.shared.mapper.LeadMapper;
+import com.luban.backend.shared.repository.AnalyticsReadRepository;
+import com.luban.backend.shared.repository.LeadRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -20,25 +20,26 @@ import java.util.*;
  * - getTrend: 趋势（按日 metric）
  *
  * 所有查询强制 siteId 过滤（多租户隔离，方案 §6.2）。
+ * DB 访问经 Repository（AnalyticsReadRepository + LeadRepository），不直连 Mapper。
  */
 @Service
 public class AnalyticsQueryService {
 
-    private final AnalyticsDailyMapper dailyMapper;
-    private final LeadMapper leadMapper;
+    private final AnalyticsReadRepository dailyRepository;
+    private final LeadRepository leadRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AnalyticsQueryService(AnalyticsDailyMapper dailyMapper, LeadMapper leadMapper) {
-        this.dailyMapper = dailyMapper;
-        this.leadMapper = leadMapper;
+    public AnalyticsQueryService(AnalyticsReadRepository dailyRepository, LeadRepository leadRepository) {
+        this.dailyRepository = dailyRepository;
+        this.leadRepository = leadRepository;
     }
 
     /** 概览：访问量/转化/Lead 数（聚合 analytics_daily + leads）。 */
     public Map<String, Object> getOverview(String siteId, LocalDate from, LocalDate to) {
-        List<AnalyticsDaily> daily = dailyMapper.listBySiteAndDateRange(siteId, from, to);
+        List<AnalyticsDaily> daily = dailyRepository.listBySiteAndDateRange(siteId, from, to);
         long views = daily.stream().mapToLong(AnalyticsDaily::getViews).sum();
         long conversions = daily.stream().mapToLong(AnalyticsDaily::getConversions).sum();
-        long leads = leadMapper.listForExport(siteId, null, null, null).size();
+        long leads = leadRepository.listForExport(siteId, null, null, null).size();
         double rate = views > 0 ? (double) conversions / views : 0;
         return Map.of(
                 "views", views,
@@ -50,7 +51,7 @@ public class AnalyticsQueryService {
 
     /** 漏斗：page_view→form_expose→form_submit 三段。 */
     public Map<String, Object> getFunnel(String siteId, LocalDate from, LocalDate to, String pageId) {
-        List<AnalyticsDaily> daily = dailyMapper.listBySiteAndDateRange(siteId, from, to).stream()
+        List<AnalyticsDaily> daily = dailyRepository.listBySiteAndDateRange(siteId, from, to).stream()
                 .filter(d -> pageId == null || pageId.equals(d.getPageId()))
                 .toList();
         long views = daily.stream().mapToLong(AnalyticsDaily::getViews).sum();
@@ -69,7 +70,7 @@ public class AnalyticsQueryService {
     /** 归因：按 UTM source/medium/campaign 聚合。 */
     public Map<String, Object> getAttribution(String siteId, LocalDate from, LocalDate to) {
         // UTM 归因需从 leads.utm_json 聚合（lead 带归因数据）
-        List<com.luban.backend.shared.entity.Lead> leads = leadMapper.listForExport(siteId, null, null, null);
+        List<com.luban.backend.shared.entity.Lead> leads = leadRepository.listForExport(siteId, null, null, null);
         Map<String, long[]> utmGroups = new HashMap<>();  // key="src|med|camp", [views(=leads), conversions]
         for (var lead : leads) {
             String utmJson = lead.getUtmJson();
@@ -107,7 +108,7 @@ public class AnalyticsQueryService {
 
     /** 趋势：按日的 metric（views/submissions/conversions）。 */
     public Map<String, Object> getTrend(String siteId, LocalDate from, LocalDate to, String metric) {
-        List<AnalyticsDaily> daily = dailyMapper.listBySiteAndDateRange(siteId, from, to);
+        List<AnalyticsDaily> daily = dailyRepository.listBySiteAndDateRange(siteId, from, to);
         Map<LocalDate, Long> byDate = new TreeMap<>();
         for (AnalyticsDaily d : daily) {
             long val = switch (metric != null ? metric : "views") {

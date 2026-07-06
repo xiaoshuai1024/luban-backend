@@ -18,6 +18,14 @@ public interface FormRepository {
     /** 按 (id, siteId) 加载聚合根（租户守卫），不存在返回 null。 */
     FormAggregate findById(String id, String siteId);
 
+    /**
+     * 按 formId 加载表单 entity（不限定 siteId）。
+     * 供公开留资提交（{@code LeadService.submit}）使用——提交入口无 siteId 上下文，
+     * 需先查 form 再得 siteId。返回 entity 而非聚合根，因为提交编排需读取
+     * status/dedupKeys/antiSpam 等原始配置字段。
+     */
+    Form findFormById(String id);
+
     /** 列表查询（读模型，按 siteId）。 */
     List<Form> listBySiteId(String siteId);
 

@@ -4,7 +4,7 @@ import com.luban.backend.shared.domain.SubscriptionAggregate;
 import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,10 +27,10 @@ public class TrialService {
     private static final Logger log = LoggerFactory.getLogger(TrialService.class);
 
     private final SubscriptionRepository subscriptionRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final DomainEventPublisher eventPublisher;
 
     public TrialService(SubscriptionRepository subscriptionRepository,
-                        ApplicationEventPublisher eventPublisher) {
+                        DomainEventPublisher eventPublisher) {
         this.subscriptionRepository = subscriptionRepository;
         this.eventPublisher = eventPublisher;
     }
@@ -71,6 +71,6 @@ public class TrialService {
         }
         agg.expireTrial();
         subscriptionRepository.save(agg);
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 }

@@ -33,6 +33,11 @@ public class FormRepositoryImpl implements FormRepository {
     }
 
     @Override
+    public Form findFormById(String id) {
+        return formMapper.getById(id);
+    }
+
+    @Override
     public List<Form> listBySiteId(String siteId) {
         return formMapper.listBySiteId(siteId);
     }

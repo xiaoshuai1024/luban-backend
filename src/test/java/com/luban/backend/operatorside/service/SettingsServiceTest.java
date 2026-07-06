@@ -1,7 +1,7 @@
 package com.luban.backend.operatorside.service;
 
 import com.luban.backend.shared.entity.SystemSettingsRow;
-import com.luban.backend.shared.mapper.SystemSettingsMapper;
+import com.luban.backend.shared.repository.SystemSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,6 +9,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,7 +34,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SettingsServiceTest {
 
-    @Mock private SystemSettingsMapper settingsMapper;
+    @Mock private SystemSettingsRepository settingsRepository;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
 
@@ -40,7 +42,7 @@ class SettingsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SettingsService(settingsMapper, redisTemplate);
+        service = new SettingsService(settingsRepository, redisTemplate);
     }
 
     @Test
@@ -52,7 +54,7 @@ class SettingsServiceTest {
         String result = service.get();
 
         assertThat(result).isEqualTo("{\"siteName\":\"Cached\"}");
-        verify(settingsMapper, never()).get();
+        verify(settingsRepository, never()).find();
     }
 
     @Test
@@ -61,7 +63,7 @@ class SettingsServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         SystemSettingsRow row = new SystemSettingsRow();
         row.setDataJson("{\"siteName\":\"DB\"}");
-        when(settingsMapper.get()).thenReturn(row);
+        when(settingsRepository.find()).thenReturn(Optional.of(row));
 
         String result = service.get();
 
@@ -72,7 +74,7 @@ class SettingsServiceTest {
     @Test
     void get_returns_default_when_db_empty() {
         when(redisTemplate.hasKey("settings:global")).thenReturn(Boolean.FALSE);
-        when(settingsMapper.get()).thenReturn(null);
+        when(settingsRepository.find()).thenReturn(Optional.empty());
 
         String result = service.get();
 
@@ -86,7 +88,7 @@ class SettingsServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         SystemSettingsRow row = new SystemSettingsRow();
         row.setDataJson(null);
-        when(settingsMapper.get()).thenReturn(row);
+        when(settingsRepository.find()).thenReturn(Optional.of(row));
 
         String result = service.get();
 
@@ -101,7 +103,7 @@ class SettingsServiceTest {
         when(valueOps.get("settings:global")).thenReturn(null);
         SystemSettingsRow row = new SystemSettingsRow();
         row.setDataJson("{\"siteName\":\"DB\"}");
-        when(settingsMapper.get()).thenReturn(row);
+        when(settingsRepository.find()).thenReturn(Optional.of(row));
 
         String result = service.get();
 
@@ -112,13 +114,13 @@ class SettingsServiceTest {
     @Test
     void update_inserts_new_row_when_db_empty() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(settingsMapper.get()).thenReturn(null);
+        when(settingsRepository.find()).thenReturn(Optional.empty());
 
         String result = service.update("{\"siteName\":\"New\"}");
 
         assertThat(result).isEqualTo("{\"siteName\":\"New\"}");
-        verify(settingsMapper).insert(any(SystemSettingsRow.class));
-        verify(settingsMapper, never()).update(any());
+        verify(settingsRepository).insert(any(SystemSettingsRow.class));
+        verify(settingsRepository, never()).update(any());
         verify(valueOps).set("settings:global", "{\"siteName\":\"New\"}");
     }
 
@@ -128,20 +130,20 @@ class SettingsServiceTest {
         SystemSettingsRow existing = new SystemSettingsRow();
         existing.setId(1);
         existing.setDataJson("{\"old\":true}");
-        when(settingsMapper.get()).thenReturn(existing);
+        when(settingsRepository.find()).thenReturn(Optional.of(existing));
 
         String result = service.update("{\"siteName\":\"Updated\"}");
 
         assertThat(result).isEqualTo("{\"siteName\":\"Updated\"}");
-        verify(settingsMapper).update(any(SystemSettingsRow.class));
-        verify(settingsMapper, never()).insert(any());
+        verify(settingsRepository).update(any(SystemSettingsRow.class));
+        verify(settingsRepository, never()).insert(any());
         verify(valueOps).set("settings:global", "{\"siteName\":\"Updated\"}");
     }
 
     @Test
     void update_uses_default_when_dataJson_null() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(settingsMapper.get()).thenReturn(null);
+        when(settingsRepository.find()).thenReturn(Optional.empty());
 
         String result = service.update(null);
 

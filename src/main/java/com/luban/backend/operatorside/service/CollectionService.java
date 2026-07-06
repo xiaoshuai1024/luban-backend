@@ -9,9 +9,9 @@ import com.luban.backend.shared.dto.CollectionResponse;
 import com.luban.backend.shared.entity.ContentCollection;
 import com.luban.backend.shared.entity.ContentCollectionItem;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.port.PublicCollectionPort;
 import com.luban.backend.shared.repository.CollectionRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -35,18 +35,18 @@ public class CollectionService implements PublicCollectionPort {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CollectionService.class);
 
     private final CollectionRepository collectionRepository;
-    private final SiteMapper siteMapper;
-    
+    private final SiteRepository siteRepository;
 
-    public CollectionService(CollectionRepository collectionRepository, SiteMapper siteMapper) {
+
+    public CollectionService(CollectionRepository collectionRepository, SiteRepository siteRepository) {
         this.collectionRepository = collectionRepository;
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
     }
 
     // === Collection ===
 
     public List<CollectionResponse> list(String siteId) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         return collectionRepository.listBySiteId(siteId).stream()
                 .map(CollectionResponse::fromEntity).collect(Collectors.toList());
     }
@@ -58,7 +58,7 @@ public class CollectionService implements PublicCollectionPort {
     }
 
     public CollectionResponse create(String siteId, String name, JsonNode fieldSchema, String status) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         CollectionAggregate agg = CollectionAggregate.newCollection(
                 UUID.randomUUID().toString(), siteId, name, jsonToString(fieldSchema), status);
         try {
@@ -146,7 +146,8 @@ public class CollectionService implements PublicCollectionPort {
      */
     @Override
     public List<CollectionItemResponse> listPublicItems(String slug, String collectionId) {
-        com.luban.backend.shared.entity.Site site = siteMapper.getBySlug(slug);
+        com.luban.backend.shared.entity.Site site = siteRepository.findBySlug(slug)
+                .map(com.luban.backend.shared.domain.SiteAggregate::toSite).orElse(null);
         if (site == null) throw BusinessException.siteNotFound();
         ContentCollection c = collectionRepository.findById(collectionId, site.getId());
         if (c == null || !"active".equals(c.getStatus())) {

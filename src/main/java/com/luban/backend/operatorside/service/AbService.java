@@ -14,9 +14,9 @@ import java.util.*;
 /**
  * AB 实验服务（v02 ab 域，T-be-9/10/11）。
  *
- * <p>v2 DDD 改造（backend-ddd-refactor plan v2 T9）：
- * 领域 Mapper（experimentMapper/variantMapper）→ {@link AbExperimentRepository}，
- * 保留 {@code assignmentMapper}（分桶记录，独立写模型）+ {@code dailyMapper}（analytics 读模型）。
+ * <p>v2 DDD 改造（backend-ddd-refactor plan v2 T9 + 阶段 1 硬化）：
+ * 领域 Mapper（experimentMapper/variantMapper）→ {@link AbExperimentRepository}。
+ * 分桶/analytics 读取经 Repository 封装，无直接 Mapper 依赖。
  *
  * <p>核心能力：
  * <ul>
@@ -36,17 +36,17 @@ import java.util.*;
 public class AbService {
 
     private final AbExperimentRepository experimentRepository;
-    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final com.luban.backend.shared.support.DomainEventPublisher eventPublisher;
 
     public AbService(AbExperimentRepository experimentRepository,
-                     org.springframework.context.ApplicationEventPublisher eventPublisher) {
+                     com.luban.backend.shared.support.DomainEventPublisher eventPublisher) {
         this.experimentRepository = experimentRepository;
         this.eventPublisher = eventPublisher;
     }
 
     /** 拉取并发布聚合根累积的领域事件（AFTER_COMMIT 由 handler 消费）。 */
     private void publishEvents(com.luban.backend.shared.domain.AbExperimentAggregate agg) {
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 
     // ===== T-be-9 CRUD =====

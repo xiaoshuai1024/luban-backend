@@ -8,9 +8,9 @@ import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.ChannelMapper;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.port.ChannelReadPort;
+import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,14 +31,15 @@ public class ChannelReadService {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final ChannelMapper channelMapper;
-    private final PageMapper pageMapper;
-    private final SiteMapper siteMapper;
+    private final ChannelReadPort channelReadPort;
+    private final PageRepository pageRepository;
+    private final SiteRepository siteRepository;
 
-    public ChannelReadService(ChannelMapper channelMapper, PageMapper pageMapper, SiteMapper siteMapper) {
-        this.channelMapper = channelMapper;
-        this.pageMapper = pageMapper;
-        this.siteMapper = siteMapper;
+    public ChannelReadService(ChannelReadPort channelReadPort, PageRepository pageRepository,
+                              SiteRepository siteRepository) {
+        this.channelReadPort = channelReadPort;
+        this.pageRepository = pageRepository;
+        this.siteRepository = siteRepository;
     }
 
     /**
@@ -53,7 +54,7 @@ public class ChannelReadService {
             throw BusinessException.shortLinkNotFound();
         }
 
-        Channel channel = channelMapper.getByShortUrl(shortUrl);
+        Channel channel = channelReadPort.getByShortUrl(shortUrl).orElse(null);
         if (channel == null) {
             throw BusinessException.shortLinkNotFound();
         }
@@ -63,7 +64,7 @@ public class ChannelReadService {
         }
 
         // 取目标 page（用 channel 记录的 targetPageId + siteId，防开放重定向）
-        Page page = pageMapper.getByIdAndSiteId(channel.getTargetPageId(), channel.getSiteId());
+        Page page = pageRepository.findEntityByIdAndSiteId(channel.getTargetPageId(), channel.getSiteId());
         if (page == null) {
             throw BusinessException.shortLinkNotFound();
         }
@@ -73,7 +74,8 @@ public class ChannelReadService {
         }
 
         // 取 site slug（website/BFF 用它拼 URL）
-        Site site = siteMapper.getById(page.getSiteId());
+        Site site = siteRepository.findById(page.getSiteId())
+                .map(com.luban.backend.shared.domain.SiteAggregate::toSite).orElse(null);
         if (site == null) {
             throw BusinessException.shortLinkNotFound();
         }

@@ -8,9 +8,9 @@ import com.luban.backend.shared.dto.UsageResponse;
 import com.luban.backend.shared.entity.Plan;
 import com.luban.backend.shared.entity.Subscription;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.PlanMapper;
+import com.luban.backend.shared.repository.PlanRepository;
 import com.luban.backend.shared.repository.SubscriptionRepository;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,15 +37,15 @@ public class SubscriptionService {
     private static final Duration TRIAL_DURATION = Duration.ofDays(14);
 
     private final SubscriptionRepository subscriptionRepository;
-    private final PlanMapper planMapper;
+    private final PlanRepository planRepository;
     private final PlanService planService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final DomainEventPublisher eventPublisher;
 
-    public SubscriptionService(SubscriptionRepository subscriptionRepository, PlanMapper planMapper,
+    public SubscriptionService(SubscriptionRepository subscriptionRepository, PlanRepository planRepository,
                                PlanService planService,
-                               ApplicationEventPublisher eventPublisher) {
+                               DomainEventPublisher eventPublisher) {
         this.subscriptionRepository = subscriptionRepository;
-        this.planMapper = planMapper;
+        this.planRepository = planRepository;
         this.planService = planService;
         this.eventPublisher = eventPublisher;
     }
@@ -67,7 +67,7 @@ public class SubscriptionService {
     /** 切换套餐（trialing→active，聚合根清 trial 字段并发 SubscriptionUpgradedEvent）。 */
     @Transactional(rollbackFor = Exception.class)
     public SubscriptionResponse subscribe(String userId, SubscribeRequest req) {
-        Plan target = planMapper.getByCode(req.planCode());
+        Plan target = planRepository.getByCode(req.planCode()).orElse(null);
         if (target == null) {
             throw new BusinessException(400, "INVALID_PLAN", "无效的套餐: " + req.planCode());
         }
@@ -88,8 +88,8 @@ public class SubscriptionService {
             return defaultFree(userId);
         }
         Subscription sub = agg.toSubscription();
-        Plan plan = planMapper.getByCode(sub.getPlanCode());
-        if (plan == null) plan = planMapper.getByCode(FREE_PLAN);
+        Plan plan = planRepository.getByCode(sub.getPlanCode()).orElse(null);
+        if (plan == null) plan = planRepository.getByCode(FREE_PLAN).orElse(null);
 
         UsageResponse usage = buildUsage(userId, plan);
         SubscriptionResponse subResp = SubscriptionResponse.fromEntity(sub);
@@ -100,9 +100,9 @@ public class SubscriptionService {
     /** GET /billing/usage。 */
     public UsageResponse getUsage(String userId, String periodMonth) {
         SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
-        Plan plan = agg != null ? planMapper.getByCode(agg.toSubscription().getPlanCode())
-                                : planMapper.getByCode(FREE_PLAN);
-        if (plan == null) plan = planMapper.getByCode(FREE_PLAN);
+        Plan plan = agg != null ? planRepository.getByCode(agg.toSubscription().getPlanCode()).orElse(null)
+                                : planRepository.getByCode(FREE_PLAN).orElse(null);
+        if (plan == null) plan = planRepository.getByCode(FREE_PLAN).orElse(null);
         return buildUsage(userId == null ? "" : userId, periodMonth, plan);
     }
 
@@ -127,12 +127,12 @@ public class SubscriptionService {
     }
 
     private MyPlanInfo defaultFree(String userId) {
-        Plan free = planMapper.getByCode(FREE_PLAN);
+        Plan free = planRepository.getByCode(FREE_PLAN).orElse(null);
         return new MyPlanInfo(
                 new SubscriptionResponse(FREE_PLAN, "active", Instant.now(), null, null),
                 free != null ? free.getName() : "免费版",
                 free != null ? planService.parseGates(free.getGates()) : List.of("lead_capture"),
-                buildUsage(userId, free != null ? free : planMapper.getByCode(FREE_PLAN))
+                buildUsage(userId, free != null ? free : planRepository.getByCode(FREE_PLAN).orElse(null))
         );
     }
 
@@ -150,6 +150,6 @@ public class SubscriptionService {
     }
 
     private void publishEvents(SubscriptionAggregate agg) {
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 }

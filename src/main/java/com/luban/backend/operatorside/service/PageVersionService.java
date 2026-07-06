@@ -6,8 +6,8 @@ import com.luban.backend.shared.dto.PageVersionResponse;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.entity.PageVersion;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.PageVersionMapper;
+import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.PageVersionRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -26,30 +26,30 @@ import java.util.stream.Collectors;
 @Service
 public class PageVersionService {
 
-    private final PageVersionMapper versionMapper;
-    private final PageMapper pageMapper;
+    private final PageVersionRepository versionRepository;
+    private final PageRepository pageRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final int KEEP_RECENT = 50;
 
-    public PageVersionService(PageVersionMapper versionMapper, PageMapper pageMapper) {
-        this.versionMapper = versionMapper;
-        this.pageMapper = pageMapper;
+    public PageVersionService(PageVersionRepository versionRepository, PageRepository pageRepository) {
+        this.versionRepository = versionRepository;
+        this.pageRepository = pageRepository;
     }
 
     /** 列出版本（不含 schema，轻量列表） */
     public List<PageVersionResponse> list(String siteId, String pageId) {
-        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        Page page = pageRepository.findEntityByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
-        return versionMapper.listByPageId(pageId).stream()
+        return versionRepository.listByPageId(pageId).stream()
             .map(v -> PageVersionResponse.fromEntity(v, false))
             .collect(Collectors.toList());
     }
 
     /** 取单版本（含 schema，详情/回滚前预览用） */
     public PageVersionResponse get(String siteId, String pageId, String versionId) {
-        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        Page page = pageRepository.findEntityByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
-        PageVersion v = versionMapper.getByIdAndPageId(versionId, pageId);
+        PageVersion v = versionRepository.getByIdAndPageId(versionId, pageId).orElse(null);
         if (v == null) throw BusinessException.pageVersionNotFound();
         return PageVersionResponse.fromEntity(v, true);
     }
@@ -59,20 +59,20 @@ public class PageVersionService {
      * 返回新版本（复制语义）。回滚动作本身也产生一条历史记录。
      */
     public PageVersionResponse rollback(String siteId, String pageId, String versionId, String createdBy) {
-        Page page = pageMapper.getByIdAndSiteId(pageId, siteId);
+        Page page = pageRepository.findEntityByIdAndSiteId(pageId, siteId);
         if (page == null) throw BusinessException.pageNotFound();
-        PageVersion target = versionMapper.getByIdAndPageId(versionId, pageId);
+        PageVersion target = versionRepository.getByIdAndPageId(versionId, pageId).orElse(null);
         if (target == null) throw BusinessException.pageVersionNotFound();
 
         // 覆盖 page.schema_json 为目标版本的 schema
         page.setSchemaJson(target.getSchemaJson());
         page.setUpdatedAt(Instant.now());
-        pageMapper.update(page);
+        pageRepository.updateEntity(page);
 
         // 新建一条 version（复制语义，versionNo 自增）
         PageVersion snapshot = buildSnapshot(pageId, target.getSchemaJson(),
             "回滚到 v" + target.getVersionNo(), createdBy);
-        versionMapper.insert(snapshot);
+        versionRepository.insert(snapshot);
         pruneOldVersions(pageId);
         return PageVersionResponse.fromEntity(snapshot, true);
     }
@@ -88,7 +88,7 @@ public class PageVersionService {
             schemaJson = "{}";
         }
         PageVersion snapshot = buildSnapshot(pageId, schemaJson, summary, createdBy);
-        versionMapper.insert(snapshot);
+        versionRepository.insert(snapshot);
         pruneOldVersions(pageId);
         return PageVersionResponse.fromEntity(snapshot, false);
     }
@@ -97,7 +97,7 @@ public class PageVersionService {
         PageVersion v = new PageVersion();
         v.setId(UUID.randomUUID().toString());
         v.setPageId(pageId);
-        int nextNo = versionMapper.maxVersionNo(pageId) + 1;
+        int nextNo = versionRepository.maxVersionNo(pageId) + 1;
         v.setVersionNo(nextNo);
         v.setSchemaJson(schemaJson);
         v.setSummary(summary);
@@ -108,10 +108,10 @@ public class PageVersionService {
 
     /** 保留最近 KEEP_RECENT 版，清理更旧的 */
     private void pruneOldVersions(String pageId) {
-        int maxNo = versionMapper.maxVersionNo(pageId);
+        int maxNo = versionRepository.maxVersionNo(pageId);
         int keepFromVersion = maxNo - KEEP_RECENT + 1;
         if (keepFromVersion > 1) {
-            versionMapper.deleteOlderThan(pageId, keepFromVersion);
+            versionRepository.deleteOlderThan(pageId, keepFromVersion);
         }
     }
 }

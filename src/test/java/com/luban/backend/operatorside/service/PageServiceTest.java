@@ -7,8 +7,8 @@ import com.luban.backend.shared.dto.PageResponse;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,14 +39,14 @@ class PageServiceTest {
 
     @Mock private PageRepository pageRepository;
     @Mock private PublishedPageProjection publishedPageProjection;
-    @Mock private SiteMapper siteMapper;
+    @Mock private SiteRepository siteRepository;
     @Mock private PageVersionService versionService;
 
     private PageService service;
 
     @BeforeEach
     void setUp() {
-        service = new PageService(pageRepository, publishedPageProjection, siteMapper, versionService);
+        service = new PageService(pageRepository, publishedPageProjection, siteRepository, versionService);
     }
 
     private Site sampleSite() {
@@ -73,7 +73,7 @@ class PageServiceTest {
 
     @Test
     void list_throws_when_siteNotFound() {
-        when(siteMapper.getById("ghost")).thenReturn(null);
+        when(siteRepository.existsById("ghost")).thenReturn(false);
 
         assertThatThrownBy(() -> service.list("ghost"))
                 .isInstanceOf(BusinessException.class)
@@ -93,7 +93,7 @@ class PageServiceTest {
 
     @Test
     void create_persists_draft_page_and_snapshot() throws Exception {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         PageResponse resp = service.create("site-1", "首页", "/home", null,
                 new ObjectMapper().readTree("{\"x\":1}"), null);
@@ -106,7 +106,7 @@ class PageServiceTest {
 
     @Test
     void create_throws_when_siteNotFound() {
-        when(siteMapper.getById("ghost")).thenReturn(null);
+        when(siteRepository.existsById("ghost")).thenReturn(false);
 
         assertThatThrownBy(() -> service.create("ghost", "n", "/p", null, null, null))
                 .isInstanceOf(BusinessException.class)
@@ -116,7 +116,7 @@ class PageServiceTest {
 
     @Test
     void create_with_published_status_uses_aggregate_state_machine() throws Exception {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         // status=published 经聚合根状态机（draft→published 允许）
         service.create("site-1", "首页", "/home", "published",
@@ -130,7 +130,7 @@ class PageServiceTest {
 
     @Test
     void create_throws_on_invalid_status() {
-        when(siteMapper.getById("site-1")).thenReturn(sampleSite());
+        when(siteRepository.existsById("site-1")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create("site-1", "n", "/p", "bogus", null, null))
                 .isInstanceOf(BusinessException.class);

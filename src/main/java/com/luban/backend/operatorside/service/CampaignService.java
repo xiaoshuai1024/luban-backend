@@ -5,8 +5,8 @@ import com.luban.backend.shared.dto.CampaignResponse;
 import com.luban.backend.shared.dto.CampaignSaveRequest;
 import com.luban.backend.shared.entity.Campaign;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.CampaignRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,27 +28,27 @@ public class CampaignService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CampaignService.class);
 
     private final CampaignRepository campaignRepository;
-    private final SiteMapper siteMapper;
+    private final SiteRepository siteRepository;
     private final TenantGuardService tenantGuard;
-    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final com.luban.backend.shared.support.DomainEventPublisher eventPublisher;
 
-    public CampaignService(CampaignRepository campaignRepository, SiteMapper siteMapper,
+    public CampaignService(CampaignRepository campaignRepository, SiteRepository siteRepository,
                            TenantGuardService tenantGuard,
-                           org.springframework.context.ApplicationEventPublisher eventPublisher) {
+                           com.luban.backend.shared.support.DomainEventPublisher eventPublisher) {
         this.campaignRepository = campaignRepository;
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
         this.tenantGuard = tenantGuard;
         this.eventPublisher = eventPublisher;
     }
 
     /** 拉取并发布聚合根累积的领域事件（AFTER_COMMIT 由 handler 消费）。 */
     private void publishEvents(com.luban.backend.shared.domain.CampaignAggregate agg) {
-        agg.pullEvents().forEach(eventPublisher::publishEvent);
+        eventPublisher.publishAll(agg.pullEvents());
     }
 
     /** 站点存在性 + 归属校验 */
     private void ensureSite(String siteId) {
-        if (siteMapper.getById(siteId) == null) {
+        if (!siteRepository.existsById(siteId)) {
             log.warn("站点不存在 siteId={}（疑似越权访问）", siteId);
             throw BusinessException.siteNotFound();
         }

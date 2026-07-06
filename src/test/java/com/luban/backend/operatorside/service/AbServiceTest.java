@@ -39,7 +39,7 @@ import static org.mockito.Mockito.when;
 class AbServiceTest {
 
     @Mock private AbExperimentRepository experimentRepository;
-    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
+    @Mock private com.luban.backend.shared.support.DomainEventPublisher eventPublisher;
 
     private AbService service;
 

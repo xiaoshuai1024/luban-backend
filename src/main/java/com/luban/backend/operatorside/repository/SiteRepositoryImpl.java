@@ -54,4 +54,14 @@ public class SiteRepositoryImpl implements SiteRepository {
     public void deleteById(String id) {
         siteMapper.deleteById(id);
     }
+
+    @Override
+    public boolean existsById(String id) {
+        return siteMapper.countById(id) > 0;
+    }
+
+    @Override
+    public boolean existsBySlug(String slug) {
+        return siteMapper.countBySlug(slug) > 0;
+    }
 }

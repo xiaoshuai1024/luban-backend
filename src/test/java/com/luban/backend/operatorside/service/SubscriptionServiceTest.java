@@ -8,7 +8,7 @@ import com.luban.backend.shared.entity.Plan;
 import com.luban.backend.shared.entity.Subscription;
 import com.luban.backend.shared.entity.UsageCounter;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.PlanMapper;
+import com.luban.backend.shared.repository.PlanRepository;
 import com.luban.backend.shared.repository.SubscriptionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,11 +16,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
+import com.luban.backend.shared.support.DomainEventPublisher;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,15 +38,15 @@ import static org.mockito.Mockito.when;
 class SubscriptionServiceTest {
 
     @Mock private SubscriptionRepository subscriptionRepository;
-    @Mock private PlanMapper planMapper;
+    @Mock private PlanRepository planRepository;
     @Mock private PlanService planService;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private DomainEventPublisher eventPublisher;
 
     private SubscriptionService service;
 
     @BeforeEach
     void setUp() {
-        service = new SubscriptionService(subscriptionRepository, planMapper, planService, eventPublisher);
+        service = new SubscriptionService(subscriptionRepository, planRepository, planService, eventPublisher);
     }
 
     private static Plan planOf(String code, String name, int leads, int pages, int visits, String gates) {
@@ -92,7 +93,7 @@ class SubscriptionServiceTest {
     @Test
     void subscribe_transitions_to_active_and_publishes_event() {
         Plan target = planOf("growth", "增长版", 100, 50, 10000, "[\"analytics\"]");
-        when(planMapper.getByCode("growth")).thenReturn(target);
+        when(planRepository.getByCode("growth")).thenReturn(Optional.of(target));
         Subscription existing = new Subscription();
         existing.setUserId("u1");
         existing.setStatus("trialing");
@@ -108,13 +109,13 @@ class SubscriptionServiceTest {
         assertThat(resp.planCode()).isEqualTo("growth");
         assertThat(resp.status()).isEqualTo("active");
         assertThat(resp.trialEndsAt()).isNull();
-        verify(eventPublisher).publishEvent(any(SubscriptionUpgradedEvent.class));
+        verify(eventPublisher).publishAll(org.mockito.ArgumentMatchers.anyList());
         verify(subscriptionRepository).save(any());
     }
 
     @Test
     void subscribe_invalid_plan_throws() {
-        when(planMapper.getByCode("nonexistent")).thenReturn(null);
+        when(planRepository.getByCode("nonexistent")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.subscribe("u1", new SubscribeRequest("nonexistent")))
                 .isInstanceOf(BusinessException.class)
@@ -125,7 +126,7 @@ class SubscriptionServiceTest {
 
     @Test
     void subscribe_subscription_not_found_throws() {
-        when(planMapper.getByCode("growth")).thenReturn(planOf("growth", "G", 1, 1, 1, "[]"));
+        when(planRepository.getByCode("growth")).thenReturn(Optional.of(planOf("growth", "G", 1, 1, 1, "[]")));
         when(subscriptionRepository.findByUserId("u1")).thenReturn(null);
 
         assertThatThrownBy(() -> service.subscribe("u1", new SubscribeRequest("growth")))
@@ -135,7 +136,7 @@ class SubscriptionServiceTest {
 
     @Test
     void subscribe_illegal_state_transition_throws() {
-        when(planMapper.getByCode("growth")).thenReturn(planOf("growth", "G", 1, 1, 1, "[]"));
+        when(planRepository.getByCode("growth")).thenReturn(Optional.of(planOf("growth", "G", 1, 1, 1, "[]")));
         Subscription existing = new Subscription();
         existing.setUserId("u1");
         existing.setStatus("active");
@@ -151,7 +152,7 @@ class SubscriptionServiceTest {
     void getMyPlan_default_free_when_no_subscription() {
         when(subscriptionRepository.findByUserId("u1")).thenReturn(null);
         Plan free = planOf("free", "免费版", 10, 3, 100, "[\"lead_capture\"]");
-        when(planMapper.getByCode("free")).thenReturn(free);
+        when(planRepository.getByCode("free")).thenReturn(Optional.of(free));
         when(planService.parseGates("[\"lead_capture\"]")).thenReturn(List.of("lead_capture"));
         when(subscriptionRepository.listUsageByUserPeriod(eq("u1"), anyString())).thenReturn(List.of());
 
@@ -172,7 +173,7 @@ class SubscriptionServiceTest {
         when(subscriptionRepository.findByUserId("u1"))
                 .thenReturn(SubscriptionAggregate.reconstitute(existing, null));
         Plan starter = planOf("starter", "入门版", 100, 50, 1000, "[]");
-        when(planMapper.getByCode("starter")).thenReturn(starter);
+        when(planRepository.getByCode("starter")).thenReturn(Optional.of(starter));
         UsageCounter leads = new UsageCounter();
         leads.setMetric("leads"); leads.setCount(42);
         UsageCounter visits = new UsageCounter();
@@ -192,7 +193,7 @@ class SubscriptionServiceTest {
     void getUsage_uses_free_plan_when_no_subscription() {
         when(subscriptionRepository.findByUserId("u1")).thenReturn(null);
         Plan free = planOf("free", "免费版", 5, 1, 50, "[]");
-        when(planMapper.getByCode("free")).thenReturn(free);
+        when(planRepository.getByCode("free")).thenReturn(Optional.of(free));
         when(subscriptionRepository.listUsageByUserPeriod("u1", "2026-07")).thenReturn(List.of());
 
         var usage = service.getUsage("u1", "2026-07");

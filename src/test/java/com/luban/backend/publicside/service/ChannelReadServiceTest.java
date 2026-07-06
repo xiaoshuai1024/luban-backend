@@ -5,14 +5,16 @@ import com.luban.backend.shared.entity.Channel;
 import com.luban.backend.shared.entity.Page;
 import com.luban.backend.shared.entity.Site;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.ChannelMapper;
-import com.luban.backend.shared.mapper.PageMapper;
-import com.luban.backend.shared.mapper.SiteMapper;
+import com.luban.backend.shared.port.ChannelReadPort;
+import com.luban.backend.shared.repository.PageRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,15 +33,15 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ChannelReadServiceTest {
 
-    @Mock private ChannelMapper channelMapper;
-    @Mock private PageMapper pageMapper;
-    @Mock private SiteMapper siteMapper;
+    @Mock private ChannelReadPort channelReadPort;
+    @Mock private PageRepository pageRepository;
+    @Mock private SiteRepository siteRepository;
 
     private ChannelReadService service;
 
     @BeforeEach
     void setUp() {
-        service = new ChannelReadService(channelMapper, pageMapper, siteMapper);
+        service = new ChannelReadService(channelReadPort, pageRepository, siteRepository);
     }
 
     private Channel activeChannel() {
@@ -90,7 +92,7 @@ class ChannelReadServiceTest {
 
     @Test
     void resolve_throws_404_when_channel_not_found() {
-        when(channelMapper.getByShortUrl("ghost")).thenReturn(null);
+        when(channelReadPort.getByShortUrl("ghost")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.resolve("ghost"))
                 .isInstanceOf(BusinessException.class)
@@ -101,7 +103,7 @@ class ChannelReadServiceTest {
     void resolve_throws_410_when_channel_inactive() {
         Channel c = activeChannel();
         c.setStatus("inactive");
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(c);
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(c));
 
         assertThatThrownBy(() -> service.resolve("summer2024"))
                 .isInstanceOf(BusinessException.class)
@@ -110,8 +112,8 @@ class ChannelReadServiceTest {
 
     @Test
     void resolve_throws_404_when_target_page_not_found() {
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(activeChannel());
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(null);
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(activeChannel()));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(null);
 
         assertThatThrownBy(() -> service.resolve("summer2024"))
                 .isInstanceOf(BusinessException.class)
@@ -120,10 +122,10 @@ class ChannelReadServiceTest {
 
     @Test
     void resolve_throws_503_when_target_page_archived() {
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(activeChannel());
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(activeChannel()));
         Page p = publishedPage();
         p.setStatus("archived");
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(p);
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(p);
 
         assertThatThrownBy(() -> service.resolve("summer2024"))
                 .isInstanceOf(BusinessException.class)
@@ -132,9 +134,9 @@ class ChannelReadServiceTest {
 
     @Test
     void resolve_throws_404_when_site_not_found() {
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(activeChannel());
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
-        when(siteMapper.getById("site-1")).thenReturn(null);
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(activeChannel()));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
+        when(siteRepository.findById("site-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.resolve("summer2024"))
                 .isInstanceOf(BusinessException.class)
@@ -143,9 +145,9 @@ class ChannelReadServiceTest {
 
     @Test
     void resolve_returns_result_with_parsed_utm_on_happy_path() {
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(activeChannel());
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
-        when(siteMapper.getById("site-1")).thenReturn(activeSite());
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(activeChannel()));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
+        when(siteRepository.findById("site-1")).thenReturn(Optional.of(com.luban.backend.shared.domain.SiteAggregate.reconstitute(activeSite())));
 
         ShortLinkResolveResult result = service.resolve("summer2024");
 
@@ -160,9 +162,9 @@ class ChannelReadServiceTest {
     void resolve_returns_null_utm_when_template_blank() {
         Channel c = activeChannel();
         c.setUtmTemplate("   ");
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(c);
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
-        when(siteMapper.getById("site-1")).thenReturn(activeSite());
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(c));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
+        when(siteRepository.findById("site-1")).thenReturn(Optional.of(com.luban.backend.shared.domain.SiteAggregate.reconstitute(activeSite())));
 
         ShortLinkResolveResult result = service.resolve("summer2024");
 
@@ -173,9 +175,9 @@ class ChannelReadServiceTest {
     void resolve_returns_null_utm_when_template_invalid_json() {
         Channel c = activeChannel();
         c.setUtmTemplate("not-json{");
-        when(channelMapper.getByShortUrl("summer2024")).thenReturn(c);
-        when(pageMapper.getByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
-        when(siteMapper.getById("site-1")).thenReturn(activeSite());
+        when(channelReadPort.getByShortUrl("summer2024")).thenReturn(Optional.of(c));
+        when(pageRepository.findEntityByIdAndSiteId("page-1", "site-1")).thenReturn(publishedPage());
+        when(siteRepository.findById("site-1")).thenReturn(Optional.of(com.luban.backend.shared.domain.SiteAggregate.reconstitute(activeSite())));
 
         ShortLinkResolveResult result = service.resolve("summer2024");
 

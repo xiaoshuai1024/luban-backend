@@ -8,8 +8,8 @@ import com.luban.backend.shared.dto.DatasourceResponse;
 import com.luban.backend.shared.dto.DatasourceTestResult;
 import com.luban.backend.shared.entity.Datasource;
 import com.luban.backend.shared.exception.BusinessException;
-import com.luban.backend.shared.mapper.SiteMapper;
 import com.luban.backend.shared.repository.DatasourceRepository;
+import com.luban.backend.shared.repository.SiteRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  *   <li>{@code testConnection}：HTTP GET 探测（网络 IO，聚合根零 infra 依赖）</li>
  *   <li>{@code configToJson}：JsonNode→String 序列化（依赖 ObjectMapper）</li>
  *   <li>{@code isDuplicate} 翻译：DataIntegrityViolationException→DATASOURCE_NAME_CONFLICT</li>
- *   <li>SITE_NOT_FOUND 校验：跨聚合查询（SiteMapper，对齐 TemplateService 范式）</li>
+ *   <li>SITE_NOT_FOUND 校验：经 SiteRepository.existsById 校验站点存在（对齐 TemplateService 范式）</li>
  * </ul>
  *
  * <p>持久化经 {@link DatasourceRepository}（不直接依赖 Mapper 做 CRUD，
@@ -55,15 +55,15 @@ public class DatasourceService {
     private static final int TEST_TIMEOUT_SECONDS = 5;
 
     private final DatasourceRepository datasourceRepository;
-    // SiteMapper 用于 SITE_NOT_FOUND 跨聚合校验（对齐 TemplateService 范式，
-    // Site 是种子数据查询，非聚合根写不变量，保留在 Service 层）。
-    private final SiteMapper siteMapper;
-    
+    // SiteRepository 用于 SITE_NOT_FOUND 跨聚合校验（对齐 TemplateService 范式，
+    // Site 是种子数据查询，非聚合根写不变量，保留在 Service 层；经 existsById 校验站点存在）。
+    private final SiteRepository siteRepository;
+
 
     public DatasourceService(DatasourceRepository datasourceRepository,
-                             SiteMapper siteMapper) {
+                             SiteRepository siteRepository) {
         this.datasourceRepository = datasourceRepository;
-        this.siteMapper = siteMapper;
+        this.siteRepository = siteRepository;
     }
 
     @Transactional(readOnly = true)
@@ -71,7 +71,7 @@ public class DatasourceService {
         if (siteId == null || siteId.isBlank()) {
             throw BusinessException.invalidArgument("siteId is required");
         }
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         return datasourceRepository.listBySiteId(siteId).stream()
                 .map(DatasourceResponse::fromEntity)
                 .collect(Collectors.toList());
@@ -86,7 +86,7 @@ public class DatasourceService {
 
     @Transactional(rollbackFor = Exception.class)
     public DatasourceResponse create(String siteId, String name, String type, JsonNode config) {
-        if (siteMapper.getById(siteId) == null) throw BusinessException.siteNotFound();
+        if (!siteRepository.existsById(siteId)) throw BusinessException.siteNotFound();
         // type 白名单由聚合根工厂校验（非法值抛 INVALID_ARGUMENT）
         DatasourceAggregate agg = DatasourceAggregate.newDatasource(
                 UUID.randomUUID().toString(), siteId, name, type, configToJson(config, true));

@@ -18,4 +18,13 @@ public interface SiteRepository {
     List<Site> list();
     void save(SiteAggregate aggregate);
     void deleteById(String id);
+
+    /**
+     * 存在性校验（轻量 SELECT 1，避免全字段加载）。
+     * 替代 Service 层对 {@code SiteMapper.getById(...) != null} 的白名单直连——
+     * 关闭 seed/readonly 白名单后，所有「站点是否存在」校验统一经此入口。
+     */
+    boolean existsById(String id);
+
+    boolean existsBySlug(String slug);
 }
