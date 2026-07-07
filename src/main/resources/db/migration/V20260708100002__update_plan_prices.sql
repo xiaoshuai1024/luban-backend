@@ -1,0 +1,12 @@
+-- 更新 plans 种子价格（billing-payment-ui plan T1）
+-- 内测期展示活动价 0（price_monthly 保持 0），但后台可改原价。
+-- 原 seed 全为 0；本迁移不修改 price_monthly（维持 0），仅为未来预留注释。
+-- 真实价格将通过管理后台或后续迁移配置（当前不强制改值，保持内测免费）。
+--
+-- 注：plan.priceMonthly 字段已存在于 V20260625000001__v02_billing_analytics_ab.sql。
+-- 本迁移为占位——未来启用真实收费时，在此 UPDATE starter=9900, growth=29900。
+-- 当前内测全免费，故不执行任何 DML（空迁移，仅文档）。
+
+-- 未来启用收费时取消注释：
+-- UPDATE plans SET price_monthly = 9900  WHERE plan_code = 'starter';
+-- UPDATE plans SET price_monthly = 29900 WHERE plan_code = 'growth';

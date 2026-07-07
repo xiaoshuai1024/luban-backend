@@ -202,6 +202,12 @@
                                      OutboxRelayScheduler 核心逻辑由 OutboxRelaySchedulerTest（@Mock）验证。 -->
                                 <exclude>com/luban/backend/shared/support/DomainEvent*</exclude>
                                 <exclude>com/luban/backend/shared/support/RateLimitExecutor*</exclude>
+                                <!-- 支付基础设施薄层（P-001）：PaymentController/MockPaymentGateway/PaymentOrder(entity/mapper)
+                                     是支付管道薄层，PaymentService 核心逻辑由 PaymentServiceTest（@Mock）验证。 -->
+                                <exclude>com/luban/backend/operatorside/controller/Payment*</exclude>
+                                <exclude>com/luban/backend/operatorside/service/MockPayment*</exclude>
+                                <exclude>com/luban/backend/shared/entity/PaymentOrder*</exclude>
+                                <exclude>com/luban/backend/shared/mapper/PaymentOrder*</exclude>
                                 <exclude>com/luban/backend/operatorside/service/OutboxRelay*</exclude>
                                 <exclude>com/luban/backend/shared/entity/DomainOutbox*</exclude>
                                 <exclude>com/luban/backend/shared/mapper/DomainOutbox*</exclude>
