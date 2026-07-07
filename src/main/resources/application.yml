@@ -34,3 +34,19 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
   type-aliases-package: com.luban.backend.shared.entity
+
+# 支付配置（P-001 计费/订阅闭环）
+# mode: mock（内测期，不调真实支付）/ wechat / alipay（未来启用）
+payment:
+  mode: mock
+  mock:
+    base-url: ${PAYMENT_MOCK_BASE_URL:https://luban.example.com/mock-pay}
+  wechat:
+    app-id: ${WECHAT_APP_ID:}
+    mch-id: ${WECHAT_MCH_ID:}
+    api-key: ${WECHAT_API_KEY:}
+    notify-url: ${WECHAT_NOTIFY_URL:}
+  alipay:
+    app-id: ${ALIPAY_APP_ID:}
+    private-key: ${ALIPAY_PRIVATE_KEY:}
+    notify-url: ${ALIPAY_NOTIFY_URL:}

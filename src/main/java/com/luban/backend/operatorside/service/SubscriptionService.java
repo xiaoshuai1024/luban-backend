@@ -36,6 +36,8 @@ public class SubscriptionService {
     private static final String STARTER_PLAN = "starter";
     private static final Duration TRIAL_DURATION = Duration.ofDays(14);
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SubscriptionService.class);
+
     private final SubscriptionRepository subscriptionRepository;
     private final PlanRepository planRepository;
     private final PlanService planService;
@@ -79,6 +81,29 @@ public class SubscriptionService {
         subscriptionRepository.save(agg);
         publishEvents(agg);
         return SubscriptionResponse.fromEntity(agg.toSubscription());
+    }
+
+    /**
+     * 支付成功后升级套餐（P-001 计费闭环，由 PaymentService 调用）。
+     *
+     * <p>与 {@link #subscribe} 的区别：本方法由支付回调/直通触发，不做 plan 存在性校验
+     * （PaymentService 已校验），仅执行聚合根状态机 + 持久化 + 发事件。
+     *
+     * @param userId   用户 ID
+     * @param orderId  支付订单 ID（日志关联用）
+     * @param planCode 目标套餐
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void subscribeViaPayment(String userId, String orderId, String planCode) {
+        SubscriptionAggregate agg = subscriptionRepository.findByUserId(userId);
+        if (agg == null) {
+            // 无订阅记录——支付成功但用户不存在/订阅被清理。记 WARN，不阻断（支付已成功）。
+            log.warn("subscribeViaPayment: 订阅记录不存在 userId={}, orderId={}, planCode={}", userId, orderId, planCode);
+            return;
+        }
+        agg.subscribe(planCode);
+        subscriptionRepository.save(agg);
+        publishEvents(agg);
     }
 
     /** 当前订阅 + 用量聚合（GET /billing/me）。 */
